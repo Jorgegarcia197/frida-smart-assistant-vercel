@@ -2,7 +2,7 @@ import { z } from 'zod';
 import { Session } from 'next-auth';
 import { DataStreamWriter, streamObject, tool } from 'ai';
 import { getDocumentById, saveSuggestions } from '@/lib/db/queries';
-import { Suggestion } from '@/lib/db/schema';
+import { Suggestion } from '@/lib/db/firebase-types';
 import { generateUUID } from '@/lib/utils';
 import { myProvider } from '../providers';
 

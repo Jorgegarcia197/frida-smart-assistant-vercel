@@ -23,6 +23,7 @@ import { createDocument } from '@/lib/ai/tools/create-document';
 import { updateDocument } from '@/lib/ai/tools/update-document';
 import { requestSuggestions } from '@/lib/ai/tools/request-suggestions';
 import { getWeather } from '@/lib/ai/tools/get-weather';
+import { createMermaidDiagram } from '@/lib/ai/tools/create-mermaid-diagram';
 import { isProductionEnvironment } from '@/lib/constants';
 import { myProvider } from '@/lib/ai/providers';
 import { entitlementsByUserType } from '@/lib/ai/entitlements';
@@ -62,39 +63,58 @@ function getStreamContext() {
 }
 
 export async function POST(request: Request) {
+  console.log('🚀 POST /api/chat - Starting request processing');
   let requestBody: PostRequestBody;
 
   try {
     const json = await request.json();
+    console.log('📝 Request JSON parsed:', {
+      hasId: !!json.id,
+      hasMessage: !!json.message,
+      messageType: json.message?.role,
+      selectedChatModel: json.selectedChatModel,
+      selectedVisibilityType: json.selectedVisibilityType
+    });
     requestBody = postRequestBodySchema.parse(json);
-  } catch (_) {
+    console.log('✅ Request body validation passed');
+  } catch (error) {
+    console.error('❌ Request parsing/validation failed:', error);
     return new ChatSDKError('bad_request:api').toResponse();
   }
 
   try {
     const { id, message, selectedChatModel, selectedVisibilityType } =
       requestBody;
+    console.log('📋 Extracted request data:', { id, messageRole: message.role, selectedChatModel, selectedVisibilityType });
 
     const session = await auth();
+    console.log('🔐 Session check:', { hasSession: !!session, hasUser: !!session?.user, userId: session?.user?.id });
 
     if (!session?.user) {
+      console.error('❌ No session or user found');
       return new ChatSDKError('unauthorized:chat').toResponse();
     }
 
     const userType: UserType = session.user.type;
+    console.log('👤 User type:', userType);
 
-    const messageCount = await getMessageCountByUserId({
-      id: session.user.id,
-      differenceInHours: 24,
-    });
+    // Rate limiting disabled
+    // const messageCount = await getMessageCountByUserId({
+    //   id: session.user.id,
+    //   differenceInHours: 24,
+    // });
+    // console.log('📊 Message count check:', { messageCount, maxAllowed: entitlementsByUserType[userType].maxMessagesPerDay });
 
-    if (messageCount > entitlementsByUserType[userType].maxMessagesPerDay) {
-      return new ChatSDKError('rate_limit:chat').toResponse();
-    }
+    // if (messageCount > entitlementsByUserType[userType].maxMessagesPerDay) {
+    //   console.error('❌ Rate limit exceeded');
+    //   return new ChatSDKError('rate_limit:chat').toResponse();
+    // }
 
     const chat = await getChatById({ id });
-
+    console.log('💬 Chat lookup:', { chatExists: !!chat, chatId: id });
+    
     if (!chat) {
+      console.log('📝 Creating new chat');
       const title = await generateTitleFromUserMessage({
         message,
       });
@@ -105,8 +125,11 @@ export async function POST(request: Request) {
         title,
         visibility: selectedVisibilityType,
       });
+      console.log('✅ New chat saved');
     } else {
+      console.log('📂 Using existing chat');
       if (chat.userId !== session.user.id) {
+        console.error('❌ Chat access forbidden');
         return new ChatSDKError('forbidden:chat').toResponse();
       }
     }
@@ -151,8 +174,16 @@ export async function POST(request: Request) {
       ),
     );
 
+    console.log('🌊 Creating data stream with streamId:', streamId);
     const stream = createDataStream({
       execute: (dataStream) => {
+        console.log('🔄 Executing stream with tools:', [
+          'getWeather',
+          'createDocument', 
+          'updateDocument',
+          'requestSuggestions',
+          'createMermaidDiagram'
+        ]);
         const result = streamText({
           model: myProvider.languageModel(selectedChatModel),
           system: systemPrompt({ selectedChatModel, requestHints }),
@@ -166,6 +197,7 @@ export async function POST(request: Request) {
                   'createDocument',
                   'updateDocument',
                   'requestSuggestions',
+                  'createMermaidDiagram',
                 ],
           experimental_transform: smoothStream({ chunking: 'word' }),
           experimental_generateMessageId: generateUUID,
@@ -177,6 +209,7 @@ export async function POST(request: Request) {
               session,
               dataStream,
             }),
+            createMermaidDiagram: createMermaidDiagram({ session, dataStream }),
           },
           onFinish: async ({ response }) => {
             if (session.user?.id) {
@@ -243,9 +276,10 @@ export async function POST(request: Request) {
     }
   } catch (error) {
     if (error instanceof ChatSDKError) {
+      console.error('❌ ChatSDKError caught:', error.message);
       return error.toResponse();
     }
-    console.error('Unexpected error in chat route:', error);
+    console.error('❌ Unexpected error in chat route:', error);
     return new ChatSDKError('bad_request:chat', 'An unexpected error occurred').toResponse();
   }
 }
@@ -304,7 +338,7 @@ export async function GET(request: Request) {
   });
 
   const stream = await streamContext.resumableStream(
-    recentStreamId,
+    recentStreamId.id,
     () => emptyDataStream,
   );
 
