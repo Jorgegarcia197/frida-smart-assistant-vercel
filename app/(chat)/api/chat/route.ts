@@ -79,6 +79,12 @@ export async function POST(request: Request) {
     console.log('✅ Request body validation passed');
   } catch (error) {
     console.error('❌ Request parsing/validation failed:', error);
+    
+    // Check if it's a character limit error
+    if (error instanceof Error && error.message.includes('too_big')) {
+      return new ChatSDKError('bad_request:api', 'Your message is too long. Please keep it under 100,000 characters.').toResponse();
+    }
+    
     return new ChatSDKError('bad_request:api').toResponse();
   }
 

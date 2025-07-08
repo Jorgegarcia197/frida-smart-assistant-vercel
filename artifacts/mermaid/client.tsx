@@ -6,7 +6,7 @@ import {
   RedoIcon,
   UndoIcon,
 } from '@/components/icons';
-import { RotateCcw } from 'lucide-react';
+import { RotateCcw, FileImage } from 'lucide-react';
 import { toast } from 'sonner';
 import { useEffect, useState, useRef } from 'react';
 import mermaid from 'mermaid';
@@ -113,12 +113,78 @@ function MermaidRenderer({
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = `${title || 'diagram'}.svg`;
+                   a.download = 'diagram.svg';
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
       URL.revokeObjectURL(url);
       toast.success('Diagram SVG downloaded!');
+    }
+  };
+
+  // Function to download the diagram as PNG
+  const downloadPNG = () => {
+    if (renderedContent && !error) {
+      try {
+        // Create a new image element
+        const img = new Image();
+        
+        // Set crossOrigin to avoid CORS issues
+        img.crossOrigin = 'anonymous';
+        
+        // Create a data URL from the SVG content to avoid tainted canvas
+        const svgDataUrl = `data:image/svg+xml;base64,${btoa(unescape(encodeURIComponent(renderedContent)))}`;
+        
+        img.onload = () => {
+          // Create a canvas element
+          const canvas = document.createElement('canvas');
+          const ctx = canvas.getContext('2d');
+          
+          if (!ctx) {
+            toast.error('Canvas not supported');
+            return;
+          }
+          
+          // Set canvas dimensions to match the image
+          canvas.width = img.naturalWidth || img.width;
+          canvas.height = img.naturalHeight || img.height;
+          
+          // Fill canvas with white background (optional, for transparency)
+          ctx.fillStyle = 'white';
+          ctx.fillRect(0, 0, canvas.width, canvas.height);
+          
+          // Draw the image onto the canvas
+          ctx.drawImage(img, 0, 0);
+          
+          // Convert canvas to PNG blob and download
+          canvas.toBlob((blob) => {
+            if (blob) {
+              const url = URL.createObjectURL(blob);
+              const a = document.createElement('a');
+              a.href = url;
+                                 a.download = 'diagram.png';
+              document.body.appendChild(a);
+              a.click();
+              document.body.removeChild(a);
+              URL.revokeObjectURL(url);
+              toast.success('Diagram PNG downloaded!');
+            } else {
+              toast.error('Failed to create PNG');
+            }
+          }, 'image/png');
+          
+          // No cleanup needed for data URL
+        };
+        
+        img.onerror = () => {
+          toast.error('Failed to load SVG for PNG conversion');
+        };
+        
+        img.src = svgDataUrl;
+      } catch (error) {
+        console.error('Error converting SVG to PNG:', error);
+        toast.error('Failed to convert diagram to PNG');
+      }
     }
   };
 
@@ -160,7 +226,25 @@ function MermaidRenderer({
                 variant="outline"
                 size="icon"
                 onClick={downloadCode}
-                title="Download diagram code"
+                title="Download diagram code (.mmd)"
+              >
+                <Download className="h-4 w-4" />
+              </Button>
+              <Button
+                variant="outline"
+                size="icon"
+                onClick={downloadSVG}
+                title="Download as SVG"
+                disabled={!renderedContent || !!error}
+              >
+                <FileImage className="h-4 w-4" />
+              </Button>
+              <Button
+                variant="outline"
+                size="icon"
+                onClick={downloadPNG}
+                title="Download as PNG"
+                disabled={!renderedContent || !!error}
               >
                 <Download className="h-4 w-4" />
               </Button>
@@ -296,7 +380,7 @@ export const mermaidArtifact = new Artifact<'mermaid', MermaidArtifactMetadata>(
     },
     {
       icon: <DownloadIcon size={18} />,
-      description: 'Download diagram code',
+      description: 'Download diagram code (.mmd)',
       onClick: ({ content, metadata }) => {
         const blob = new Blob([content], { type: 'text/plain' });
         const url = URL.createObjectURL(blob);
@@ -308,6 +392,107 @@ export const mermaidArtifact = new Artifact<'mermaid', MermaidArtifactMetadata>(
         document.body.removeChild(a);
         URL.revokeObjectURL(url);
         toast.success('Diagram code downloaded!');
+      },
+    },
+    {
+      icon: <FileImage size={18} />,
+      description: 'Download as SVG',
+      onClick: ({ content, metadata }) => {
+        // We need to render the mermaid content to SVG first
+        import('mermaid').then((mermaid) => {
+          mermaid.default.initialize({
+            startOnLoad: false,
+            theme: 'default',
+            securityLevel: 'loose',
+            fontFamily: 'arial',
+          });
+
+          const diagramId = `mermaid-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+          
+          mermaid.default.render(diagramId, content).then(({ svg }) => {
+            const blob = new Blob([svg], { type: 'image/svg+xml' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+                         a.download = 'diagram.svg';
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+            toast.success('Diagram SVG downloaded!');
+          }).catch((error) => {
+            console.error('Error rendering SVG:', error);
+            toast.error('Failed to render diagram as SVG');
+          });
+        });
+      },
+    },
+    {
+      icon: <DownloadIcon size={18} />,
+      description: 'Download as PNG',
+      onClick: ({ content, metadata }) => {
+        // We need to render the mermaid content to SVG first, then convert to PNG
+        import('mermaid').then((mermaid) => {
+          mermaid.default.initialize({
+            startOnLoad: false,
+            theme: 'default',
+            securityLevel: 'loose',
+            fontFamily: 'arial',
+          });
+
+          const diagramId = `mermaid-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+          
+          mermaid.default.render(diagramId, content).then(({ svg }) => {
+            // Convert SVG to PNG
+            const img = new Image();
+            img.crossOrigin = 'anonymous';
+            const svgDataUrl = `data:image/svg+xml;base64,${btoa(unescape(encodeURIComponent(svg)))}`;
+            
+            img.onload = () => {
+              const canvas = document.createElement('canvas');
+              const ctx = canvas.getContext('2d');
+              
+              if (!ctx) {
+                toast.error('Canvas not supported');
+                return;
+              }
+              
+              canvas.width = img.naturalWidth || img.width;
+              canvas.height = img.naturalHeight || img.height;
+              
+              ctx.fillStyle = 'white';
+              ctx.fillRect(0, 0, canvas.width, canvas.height);
+              ctx.drawImage(img, 0, 0);
+              
+              canvas.toBlob((blob) => {
+                if (blob) {
+                  const url = URL.createObjectURL(blob);
+                  const a = document.createElement('a');
+                  a.href = url;
+                                     a.download = 'diagram.png';
+                  document.body.appendChild(a);
+                  a.click();
+                  document.body.removeChild(a);
+                  URL.revokeObjectURL(url);
+                  toast.success('Diagram PNG downloaded!');
+                } else {
+                  toast.error('Failed to create PNG');
+                }
+              }, 'image/png');
+              
+              // No cleanup needed for data URL
+            };
+            
+            img.onerror = () => {
+              toast.error('Failed to load SVG for PNG conversion');
+            };
+            
+            img.src = svgDataUrl;
+          }).catch((error) => {
+            console.error('Error rendering diagram:', error);
+            toast.error('Failed to render diagram');
+          });
+        });
       },
     },
   ],

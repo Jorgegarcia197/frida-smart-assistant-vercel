@@ -297,7 +297,19 @@ function PureMultimodalInput({
         <AttachmentsButton fileInputRef={fileInputRef} status={status} />
       </div>
 
-      <div className="absolute bottom-0 right-0 p-2 w-fit flex flex-row justify-end">
+      <div className="absolute bottom-0 right-0 p-2 w-fit flex flex-row justify-end gap-2 items-center">
+        {input.length > 0 && (
+          <div className={cx(
+            "text-xs px-2 py-1 rounded-md transition-colors",
+            input.length > 100000 
+              ? "text-red-500 bg-red-50 dark:bg-red-900/20" 
+              : input.length > 90000 
+                ? "text-yellow-600 bg-yellow-50 dark:bg-yellow-900/20" 
+                : "text-muted-foreground bg-muted"
+          )}>
+            {input.length.toLocaleString()}/100,000
+          </div>
+        )}
         {status === 'submitted' ? (
           <StopButton stop={stop} setMessages={setMessages} />
         ) : (
@@ -391,7 +403,7 @@ function PureSendButton({
         event.preventDefault();
         submitForm();
       }}
-      disabled={input.length === 0 || uploadQueue.length > 0}
+      disabled={input.length === 0 || input.length > 100000 || uploadQueue.length > 0}
     >
       <ArrowUpIcon size={14} />
     </Button>
