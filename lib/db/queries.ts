@@ -16,6 +16,104 @@ import { generateHashedPassword } from './utils';
 import type { VisibilityType } from '@/components/visibility-selector';
 import { ChatSDKError } from '../errors';
 
+// Helper function to check environment for emulator settings
+function checkEmulatorEnvironment(): { hasEmulatorEnv: boolean; emulatorHost?: string } {
+  const emulatorHost = process.env.FIRESTORE_EMULATOR_HOST || process.env.FIREBASE_EMULATOR_HOST;
+  return {
+    hasEmulatorEnv: !!emulatorHost,
+    emulatorHost
+  };
+}
+
+// Comprehensive Firebase setup diagnostics
+export async function diagnoseFirebaseSetup(): Promise<{
+  success: boolean;
+  issues: string[];
+  recommendations: string[];
+  environment: any;
+}> {
+  const issues: string[] = [];
+  const recommendations: string[] = [];
+
+  // Check for emulator environment
+  const emulatorCheck = checkEmulatorEnvironment();
+  if (emulatorCheck.hasEmulatorEnv) {
+    issues.push(`Emulator environment detected: ${emulatorCheck.emulatorHost}`);
+    recommendations.push('Unset FIRESTORE_EMULATOR_HOST and FIREBASE_EMULATOR_HOST environment variables for production use');
+  }
+
+  // Check environment variables
+  const requiredEnvVars = [
+    'FIREBASE_SERVICE_ACCOUNT',
+    'NEXT_PUBLIC_FIREBASE_PROJECT_ID',
+    'NEXT_PUBLIC_FIREBASE_API_KEY'
+  ];
+
+  for (const envVar of requiredEnvVars) {
+    if (!process.env[envVar]) {
+      issues.push(`Missing environment variable: ${envVar}`);
+      recommendations.push(`Set ${envVar} in your .env.local file`);
+    }
+  }
+
+  // Check service account format
+  const serviceAccount = process.env.FIREBASE_SERVICE_ACCOUNT;
+  if (serviceAccount) {
+    try {
+      const parsed = JSON.parse(serviceAccount);
+      if (!parsed.type || !parsed.project_id || !parsed.private_key) {
+        issues.push('FIREBASE_SERVICE_ACCOUNT is missing required fields');
+        recommendations.push('Ensure service account JSON contains type, project_id, and private_key');
+      }
+    } catch (error) {
+      issues.push('FIREBASE_SERVICE_ACCOUNT is not valid JSON');
+      recommendations.push('Check that FIREBASE_SERVICE_ACCOUNT is properly formatted JSON');
+    }
+  }
+
+  // Environment info for debugging
+  const environment = {
+    nodeEnv: process.env.NODE_ENV,
+    hasServiceAccount: !!process.env.FIREBASE_SERVICE_ACCOUNT,
+    hasProjectId: !!process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID,
+    hasApiKey: !!process.env.NEXT_PUBLIC_FIREBASE_API_KEY,
+    projectId: process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID,
+    emulatorHost: emulatorCheck.emulatorHost,
+    hasEmulatorEnv: emulatorCheck.hasEmulatorEnv
+  };
+
+  // Only test connection if no emulator environment is detected
+  if (!emulatorCheck.hasEmulatorEnv) {
+    try {
+      await db.collection('_test').limit(1).get();
+    } catch (error) {
+      const errorCode = (error as any)?.code;
+      const errorMessage = (error as any)?.message;
+      
+      if (errorMessage?.includes('ECONNREFUSED') && errorMessage?.includes('8080')) {
+        issues.push('Firebase is trying to connect to emulator despite environment check');
+        recommendations.push('Restart your development server and ensure no emulator processes are running');
+      } else if (errorCode === 'permission-denied') {
+        issues.push('Permission denied when querying Firestore');
+        recommendations.push('Check Firestore security rules and ensure proper authentication');
+      } else if (errorCode === 'unauthenticated') {
+        issues.push('Unauthenticated access to Firestore');
+        recommendations.push('Verify FIREBASE_SERVICE_ACCOUNT configuration and permissions');
+      } else {
+        issues.push(`Firestore query failed: ${errorMessage}`);
+        recommendations.push('Check Firebase project configuration and network connectivity');
+      }
+    }
+  }
+
+  return {
+    success: issues.length === 0,
+    issues,
+    recommendations,
+    environment
+  };
+}
+
 // User operations
 export async function getUser(email: string): Promise<Array<User>> {
   try {
@@ -133,18 +231,33 @@ export async function getChatsByUserId({
   endingBefore: string | null;
 }) {
   try {
+    console.log('🔍 getChatsByUserId called with:', { id, limit, startingAfter, endingBefore });
+    
+    // Validate input parameters
+    if (!id || typeof id !== 'string') {
+      throw new ChatSDKError('bad_request:database', 'Invalid user ID provided');
+    }
+    
+    if (limit <= 0 || limit > 100) {
+      throw new ChatSDKError('bad_request:database', 'Limit must be between 1 and 100');
+    }
+
     let query = db.collection('chats')
       .where('userId', '==', id)
       .orderBy('createdAt', 'desc')
       .limit(limit + 1);
 
+    console.log('📝 Base query created for userId:', id);
+
     if (startingAfter) {
+      console.log('⏭️ Adding startAfter cursor:', startingAfter);
       const startDoc = await db.collection('chats').doc(startingAfter).get();
       if (!startDoc.exists) {
         throw new ChatSDKError('not_found:database', `Chat with id ${startingAfter} not found`);
       }
       query = query.startAfter(startDoc);
     } else if (endingBefore) {
+      console.log('⏮️ Adding endBefore cursor:', endingBefore);
       const endDoc = await db.collection('chats').doc(endingBefore).get();
       if (!endDoc.exists) {
         throw new ChatSDKError('not_found:database', `Chat with id ${endingBefore} not found`);
@@ -152,21 +265,71 @@ export async function getChatsByUserId({
       query = query.endBefore(endDoc);
     }
 
+    console.log('🚀 Executing Firestore query...');
     const snapshot = await query.get();
-    const chats = snapshot.docs.map(doc => ({
-      id: doc.id,
-      ...doc.data(),
-      createdAt: timestampToDate(doc.data().createdAt)
-    })) as Chat[];
+    console.log(`📊 Query returned ${snapshot.docs.length} documents`);
+
+    const chats = snapshot.docs.map(doc => {
+      const data = doc.data();
+      if (!data.createdAt) {
+        console.warn(`⚠️ Document ${doc.id} missing createdAt field`);
+        return null;
+      }
+      return {
+        id: doc.id,
+        ...data,
+        createdAt: timestampToDate(data.createdAt)
+      };
+    }).filter(Boolean) as Chat[];
 
     const hasMore = chats.length > limit;
-    return {
+    const result = {
       chats: hasMore ? chats.slice(0, limit) : chats,
       hasMore,
     };
+    
+    console.log(`✅ getChatsByUserId completed successfully. Returning ${result.chats.length} chats, hasMore: ${result.hasMore}`);
+    return result;
+    
   } catch (error) {
-    console.error('getChatsByUserId error:', error);
-    throw new ChatSDKError('bad_request:database', 'Failed to get chats by user id');
+    console.error('❌ getChatsByUserId error:', error);
+    
+    // Enhanced error logging
+    const errorDetails = {
+      userId: id,
+      limit,
+      startingAfter,
+      endingBefore,
+      errorType: error?.constructor?.name,
+      errorCode: (error as any)?.code,
+      errorMessage: (error as any)?.message,
+      isFirebaseError: !!(error as any)?.code?.startsWith?.('permission-denied') || !!(error as any)?.code?.startsWith?.('unauthenticated'),
+      timestamp: new Date().toISOString()
+    };
+    
+    console.error('📋 Error details:', errorDetails);
+    
+    // If it's already a ChatSDKError, re-throw it
+    if (error instanceof ChatSDKError) {
+      throw error;
+    }
+    
+    // Handle specific Firebase errors
+    if ((error as any)?.code === 'permission-denied') {
+      throw new ChatSDKError('unauthorized:database', 'Permission denied: Check Firebase security rules and authentication');
+    }
+    
+    if ((error as any)?.code === 'unauthenticated') {
+      throw new ChatSDKError('unauthorized:database', 'Unauthenticated: Check Firebase service account configuration');
+    }
+
+    // Handle emulator connection errors
+    if ((error as any)?.message?.includes('ECONNREFUSED') && (error as any)?.message?.includes('8080')) {
+      throw new ChatSDKError('bad_request:database', 'Firebase is trying to connect to emulator. Check your environment configuration and ensure FIRESTORE_EMULATOR_HOST is not set.');
+    }
+    
+    // Generic database error
+    throw new ChatSDKError('bad_request:database', `Failed to get chats by user id: ${(error as any)?.message || 'Unknown error'}`);
   }
 }
 
