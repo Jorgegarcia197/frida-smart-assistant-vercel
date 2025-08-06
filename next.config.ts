@@ -4,17 +4,13 @@ const nextConfig: NextConfig = {
   experimental: {
     ppr: true,
   },
+  devIndicators: false,
   images: {
     remotePatterns: [
       {
         hostname: 'avatar.vercel.sh',
       },
     ],
-  },
-  api: {
-    bodyParser: {
-      sizeLimit: '50mb',
-    },
   },
 };
 

@@ -20,6 +20,60 @@ import {
 import { Button } from '@/components/ui/button';
 import { Download, Maximize2 } from 'lucide-react';
 
+// Loading component for streaming Mermaid diagrams
+function MermaidStreamingLoader({ isInline = false }: { isInline?: boolean }) {
+  if (isInline) {
+    return (
+      <Card className="overflow-hidden">
+        <CardHeader className="p-4">
+          <div className="flex justify-between items-center">
+            <div className="flex-1">
+              <div className="animate-pulse rounded-lg h-6 bg-muted-foreground/20 w-48 mb-2" />
+              <div className="animate-pulse rounded-lg h-4 bg-muted-foreground/20 w-64" />
+            </div>
+            <div className="flex gap-2">
+              <div className="animate-pulse rounded-md h-8 w-8 bg-muted-foreground/20" />
+              <div className="animate-pulse rounded-md h-8 w-8 bg-muted-foreground/20" />
+              <div className="animate-pulse rounded-md h-8 w-8 bg-muted-foreground/20" />
+            </div>
+          </div>
+        </CardHeader>
+        <CardContent className="p-4 pt-0">
+          <div className="border rounded p-4 bg-white min-h-[300px] flex flex-col items-center justify-center gap-4">
+            <div className="flex items-center gap-3">
+              <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-blue-600"></div>
+              <span className="text-sm text-gray-600">Generating diagram...</span>
+            </div>
+            <div className="flex flex-col gap-2 w-full max-w-md">
+              <div className="animate-pulse rounded-lg h-4 bg-muted-foreground/20 w-full" />
+              <div className="animate-pulse rounded-lg h-4 bg-muted-foreground/20 w-3/4" />
+              <div className="animate-pulse rounded-lg h-4 bg-muted-foreground/20 w-1/2" />
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  return (
+    <div className="h-full w-full flex flex-col items-center justify-center p-8 bg-white">
+      <div className="flex flex-col items-center gap-4 max-w-md w-full">
+        <div className="flex items-center gap-3 mb-4">
+          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
+          <span className="text-lg text-gray-700">Generating diagram...</span>
+        </div>
+        <div className="w-full space-y-3">
+          <div className="animate-pulse rounded-lg h-6 bg-muted-foreground/20 w-full" />
+          <div className="animate-pulse rounded-lg h-6 bg-muted-foreground/20 w-4/5" />
+          <div className="animate-pulse rounded-lg h-6 bg-muted-foreground/20 w-3/5" />
+          <div className="animate-pulse rounded-lg h-6 bg-muted-foreground/20 w-4/5" />
+          <div className="animate-pulse rounded-lg h-6 bg-muted-foreground/20 w-2/5" />
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // Interface for the Mermaid tool props
 export interface MermaidToolProps {
   diagram: string;
@@ -51,10 +105,16 @@ function MermaidRenderer({
 
   useEffect(() => {
     const renderDiagram = async () => {
-      if (!diagram || !containerRef.current) return;
+      if (!diagram || !containerRef.current) {
+        console.log('Mermaid: Missing diagram or container', { diagram: !!diagram, container: !!containerRef.current });
+        return;
+      }
 
       try {
         setError(null);
+        setRenderedContent(null); // Clear previous content
+        
+        console.log('Mermaid: Rendering diagram', diagram.substring(0, 100) + '...');
         
         // Initialize mermaid with configuration
         mermaid.initialize({
@@ -70,6 +130,7 @@ function MermaidRenderer({
         // Render the diagram to SVG
         const { svg } = await mermaid.render(diagramId, diagram);
         
+        console.log('Mermaid: Successfully rendered SVG', svg.substring(0, 100) + '...');
         setRenderedContent(svg);
       } catch (err) {
         console.error('Mermaid rendering error:', err);
@@ -332,11 +393,12 @@ export const mermaidArtifact = new Artifact<'mermaid', MermaidArtifactMetadata>(
     content,
     title,
     isLoading,
+    status,
     metadata,
     isInline,
   }) => {
-    if (isLoading) {
-      return <DocumentSkeleton artifactKind="mermaid" />;
+    if (isLoading || status === 'streaming') {
+      return <MermaidStreamingLoader isInline={isInline} />;
     }
 
     return (
