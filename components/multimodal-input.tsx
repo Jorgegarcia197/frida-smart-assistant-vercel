@@ -328,7 +328,7 @@ function PureMultimodalInput({
                 animate={{ x: 0 }}
                 exit={{ x: "-100%" }}
                 transition={{ type: "spring", stiffness: 300, damping: 30 }}
-                className="fixed inset-y-0 left-0 z-50 h-screen w-[400px] max-w-[90vw] bg-background border-r"
+                className="fixed inset-y-0 left-0 z-50 h-screen md:w-[400px] md:max-w-[90vw] sm:w-full sm:max-w-full bg-background border-r"
               >
                 <MCPHubContent setIsMCPHubOpen={setIsMCPHubOpen} />
               </motion.div>
