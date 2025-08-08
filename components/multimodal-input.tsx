@@ -24,9 +24,10 @@ import { SuggestedActions } from './suggested-actions';
 import equal from 'fast-deep-equal';
 import type { UseChatHelpers } from '@ai-sdk/react';
 import { AnimatePresence, motion } from 'framer-motion';
-import { ArrowDown } from 'lucide-react';
+import { ArrowDown, Server } from 'lucide-react';
 import { useScrollToBottom } from '@/hooks/use-scroll-to-bottom';
 import type { VisibilityType } from './visibility-selector';
+import MCPHubContent from './mcp-hub-content';
 
 function PureMultimodalInput({
   chatId,
@@ -108,6 +109,7 @@ function PureMultimodalInput({
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [uploadQueue, setUploadQueue] = useState<Array<string>>([]);
+  const [isMCPHubOpen, setIsMCPHubOpen] = useState(false);
 
   const submitForm = useCallback(() => {
     window.history.replaceState({}, '', `/chat/${chatId}`);
@@ -293,8 +295,45 @@ function PureMultimodalInput({
         }}
       />
 
-      <div className="absolute bottom-0 p-2 w-fit flex flex-row justify-start">
+      <div className="absolute bottom-0 p-2 w-fit flex flex-row justify-start items-center">
         <AttachmentsButton fileInputRef={fileInputRef} status={status} />
+        <Button
+          variant="ghost"
+          className="rounded-md rounded-bl-lg p-[7px] h-fit dark:border-zinc-700 hover:dark:bg-zinc-900 hover:bg-zinc-200"
+          onClick={(e) => {
+            e.preventDefault();
+            setIsMCPHubOpen(true);
+          }}
+        >
+          <Server className="size-4" />
+        </Button>
+        
+        <AnimatePresence>
+          {isMCPHubOpen && (
+            <>
+              {/* Overlay */}
+              <motion.div
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                transition={{ duration: 0.2 }}
+                className="fixed inset-0 z-50 bg-black/80"
+                onClick={() => setIsMCPHubOpen(false)}
+              />
+              
+              {/* Left sliding panel */}
+              <motion.div
+                initial={{ x: "-100%" }}
+                animate={{ x: 0 }}
+                exit={{ x: "-100%" }}
+                transition={{ type: "spring", stiffness: 300, damping: 30 }}
+                className="fixed inset-y-0 left-0 z-50 h-screen w-[400px] max-w-[90vw] bg-background border-r"
+              >
+                <MCPHubContent setIsMCPHubOpen={setIsMCPHubOpen} />
+              </motion.div>
+            </>
+          )}
+        </AnimatePresence>
       </div>
 
       <div className="absolute bottom-0 right-0 p-2 w-fit flex flex-row justify-end gap-2 items-center">

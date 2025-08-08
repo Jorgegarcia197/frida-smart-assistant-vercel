@@ -41,13 +41,13 @@ export default function Page() {
         type: 'error',
         description: 'Failed validating your submission!',
       });
-    } else if (state.status === 'success') {
+    } else if (state.status === 'success' && !isSuccessful) {
       console.log('Login successful, redirecting...');
       setIsSuccessful(true);
       updateSession();
       router.push('/');
     }
-  }, [state?.status, router, updateSession]);
+  }, [state?.status, router, isSuccessful]);
 
   const handleSubmit = (formData: FormData) => {
     setEmail(formData.get('email') as string);
