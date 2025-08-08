@@ -27,6 +27,10 @@ import { createMermaidDiagram } from '@/lib/ai/tools/create-mermaid-diagram';
 import { isProductionEnvironment } from '@/lib/constants';
 import { myProvider } from '@/lib/ai/providers';
 import { entitlementsByUserType } from '@/lib/ai/entitlements';
+import { getMCPClientForUser } from '@/lib/mcp/server-manager';
+import { ToolRegistry } from '@/lib/mcp/tool-registry';
+import { tool } from 'ai';
+import { z } from 'zod';
 import { postRequestBodySchema, type PostRequestBody } from './schema';
 import { geolocation } from '@vercel/functions';
 import {
@@ -180,16 +184,94 @@ export async function POST(request: Request) {
       ),
     );
 
+    // Get MCP client and tools for this user
+    let mcpToolRegistry: ToolRegistry | null = null;
+    let mcpTools: Record<string, any> = {};
+    let mcpActiveTools: string[] = [];
+    
+    try {
+      const mcpClient = await getMCPClientForUser(session.user.id, session.user.email);
+      if (mcpClient && !mcpClient.isConnecting) {
+        mcpToolRegistry = new ToolRegistry();
+        mcpToolRegistry.rebuild(mcpClient.connections, mcpClient);
+        
+        // Convert MCP tools to the format expected by the AI SDK
+        const mcpToolDefs = mcpToolRegistry.list();
+        console.log('🔧 Available MCP tools:', mcpToolDefs.map(t => t.name));
+        
+        for (const toolDef of mcpToolDefs) {
+          // Convert JSON Schema to Zod schema for parameters
+          let parametersSchema = z.object({});
+          if (toolDef.parameters && typeof toolDef.parameters === 'object') {
+            try {
+              // Create a simple zod schema from the JSON schema properties
+              const properties = toolDef.parameters.properties || {};
+              const zodFields: Record<string, z.ZodTypeAny> = {};
+              
+              for (const [key, value] of Object.entries(properties)) {
+                const prop = value as any;
+                if (prop.type === 'string') {
+                  zodFields[key] = z.string();
+                } else if (prop.type === 'number') {
+                  zodFields[key] = z.number();
+                } else if (prop.type === 'boolean') {
+                  zodFields[key] = z.boolean();
+                } else if (prop.type === 'array') {
+                  zodFields[key] = z.array(z.any());
+                } else {
+                  zodFields[key] = z.any();
+                }
+                
+                // Handle optional fields
+                if (!toolDef.parameters.required?.includes(key)) {
+                  zodFields[key] = zodFields[key].optional();
+                }
+              }
+              
+              if (Object.keys(zodFields).length > 0) {
+                parametersSchema = z.object(zodFields);
+              }
+            } catch (error) {
+              console.warn(`Failed to convert JSON schema to Zod for tool ${toolDef.name}:`, error);
+              parametersSchema = z.object({});
+            }
+          }
+
+          mcpTools[toolDef.name] = tool({
+            description: toolDef.description || `MCP tool: ${toolDef.name}`,
+            parameters: parametersSchema,
+            execute: async (args: any) => {
+              if (!mcpToolRegistry) {
+                throw new Error('MCP tool registry not available');
+              }
+              console.log(`🛠️ Executing MCP tool: ${toolDef.name} with args:`, args);
+              const result = await mcpToolRegistry.invoke(toolDef.name, args);
+              console.log(`✅ MCP tool result for ${toolDef.name}:`, result);
+              return result;
+            }
+          });
+          mcpActiveTools.push(toolDef.name);
+        }
+      }
+    } catch (error) {
+      console.error('❌ Failed to initialize MCP tools:', error);
+      // Continue without MCP tools rather than failing the entire request
+    }
+
     console.log('🌊 Creating data stream with streamId:', streamId);
     const stream = createDataStream({
       execute: (dataStream) => {
-        console.log('🔄 Executing stream with tools:', [
+        // Combine built-in tools with MCP tools
+        const builtInActiveTools = [
           'getWeather',
           'createDocument', 
           'updateDocument',
           'requestSuggestions',
           'createMermaidDiagram'
-        ]);
+        ];
+        const allActiveTools = [...builtInActiveTools, ...mcpActiveTools];
+        
+        console.log('🔄 Executing stream with tools:', allActiveTools);
         const result = streamText({
           model: myProvider.languageModel(selectedChatModel),
           system: systemPrompt({ selectedChatModel, requestHints }),
@@ -198,13 +280,7 @@ export async function POST(request: Request) {
           experimental_activeTools:
             selectedChatModel === 'chat-model-reasoning'
               ? []
-              : [
-                  'getWeather',
-                  'createDocument',
-                  'updateDocument',
-                  'requestSuggestions',
-                  'createMermaidDiagram',
-                ],
+              : allActiveTools as any, // MCP tools are added dynamically, so we need to cast
           experimental_transform: smoothStream({ chunking: 'word' }),
           experimental_generateMessageId: generateUUID,
           tools: {
@@ -216,6 +292,7 @@ export async function POST(request: Request) {
               dataStream,
             }),
             createMermaidDiagram: createMermaidDiagram({ session, dataStream }),
+            ...mcpTools,
           },
           onFinish: async ({ response }) => {
             if (session.user?.id) {

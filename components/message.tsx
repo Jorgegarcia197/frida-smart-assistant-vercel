@@ -19,6 +19,7 @@ import { MessageEditor } from './message-editor';
 import { DocumentPreview } from './document-preview';
 import { MessageReasoning } from './message-reasoning';
 import type { UseChatHelpers } from '@ai-sdk/react';
+import { McpToolCard } from './mcp-tool-card';
 
 const PurePreviewMessage = ({
   chatId,
@@ -157,6 +158,9 @@ const PurePreviewMessage = ({
                 const { toolInvocation } = part;
                 const { toolName, toolCallId, state } = toolInvocation;
 
+                // Check if this is an MCP tool (contains double underscore)
+                const isMcpTool = toolName.includes('__');
+                
                 if (state === 'call') {
                   const { args } = toolInvocation;
 
@@ -167,7 +171,15 @@ const PurePreviewMessage = ({
                         skeleton: ['getWeather'].includes(toolName),
                       })}
                     >
-                      {toolName === 'getWeather' ? (
+                      {isMcpTool ? (
+                        <McpToolCard
+                          serverName={toolName.split('__')[0]}
+                          toolName={toolName}
+                          state="call"
+                          args={args}
+                          isReadonly={isReadonly}
+                        />
+                      ) : toolName === 'getWeather' ? (
                         <Weather />
                       ) : toolName === 'createDocument' ? (
                         <DocumentPreview isReadonly={isReadonly} args={args} />
@@ -189,11 +201,19 @@ const PurePreviewMessage = ({
                 }
 
                 if (state === 'result') {
-                  const { result } = toolInvocation;
+                  const { result} = toolInvocation;
 
                   return (
                     <div key={toolCallId}>
-                      {toolName === 'getWeather' ? (
+                      {isMcpTool ? (
+                        <McpToolCard
+                          serverName={toolName.split('__')[0]}
+                          toolName={toolName}
+                          state="result"
+                          result={"The tool was executed successfully! Check the result below."}
+                          isReadonly={isReadonly}
+                        />
+                      ) : toolName === 'getWeather' ? (
                         <Weather weatherAtLocation={result} />
                       ) : toolName === 'createDocument' ? (
                         <DocumentPreview

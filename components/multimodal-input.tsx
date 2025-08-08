@@ -304,6 +304,7 @@ function PureMultimodalInput({
             e.preventDefault();
             setIsMCPHubOpen(true);
           }}
+          disabled={status !== 'ready'}
         >
           <Server className="size-4" />
         </Button>

@@ -386,7 +386,7 @@ const MCPHubContent = ({ setIsMCPHubOpen }: MCPHubContentProps) => {
               </div>
             </div>
 
-            <div className="relative">
+            {/* <div className="relative">
               <div className="absolute inset-0 flex items-center">
                 <span className="w-full border-t" />
               </div>
@@ -395,10 +395,10 @@ const MCPHubContent = ({ setIsMCPHubOpen }: MCPHubContentProps) => {
                   or
                 </span>
               </div>
-            </div>
+            </div> */}
 
             {/* Configure STDIO Button */}
-            <Dialog
+            {/* <Dialog
               open={isConfigDialogOpen}
               onOpenChange={setIsConfigDialogOpen}
             >
@@ -533,7 +533,6 @@ const MCPHubContent = ({ setIsMCPHubOpen }: MCPHubContentProps) => {
                       )}
                     </div>
 
-                    {/* Save Button */}
                     <div className="flex justify-end gap-2 pt-4 border-t">
                       <Button
                         variant="outline"
@@ -558,7 +557,7 @@ const MCPHubContent = ({ setIsMCPHubOpen }: MCPHubContentProps) => {
                   </div>
                 </div>
               </DialogContent>
-            </Dialog>
+            </Dialog> */}
 
             {/* MCP Servers List */}
             <div className="space-y-2">
