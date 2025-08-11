@@ -67,8 +67,8 @@ const ServerConfigSchema = z.union([StdioConfigSchema, SseConfigSchema]);
 export type McpServerConfig = z.infer<typeof ServerConfigSchema>;
 
 export class MCPClient {
-  // Private properties
-  private userId: string;
+  // public properties
+  public userId: string;
 
   // Variables
   connections: McpConnection[] = [];

@@ -27,8 +27,7 @@ import { createMermaidDiagram } from '@/lib/ai/tools/create-mermaid-diagram';
 import { isProductionEnvironment } from '@/lib/constants';
 import { myProvider } from '@/lib/ai/providers';
 import { entitlementsByUserType } from '@/lib/ai/entitlements';
-import { getMCPClientForUser } from '@/lib/mcp/server-manager';
-import { ToolRegistry } from '@/lib/mcp/tool-registry';
+import { getMcpClientInstance } from '@/lib/mcp/mcp-singleton-instance';
 import { tool } from 'ai';
 import { z } from 'zod';
 import { postRequestBodySchema, type PostRequestBody } from './schema';
@@ -64,6 +63,133 @@ function getStreamContext() {
   }
 
   return globalStreamContext;
+}
+
+// Helper function to convert JSON Schema to Zod object schema
+function jsonSchemaToZodObject(jsonSchema: any): z.ZodObject<any> {
+  if (!jsonSchema || typeof jsonSchema !== 'object') {
+    return z.object({});
+  }
+
+  const { properties, required = [] } = jsonSchema;
+
+  if (properties && typeof properties === 'object') {
+    const zodFields: Record<string, z.ZodTypeAny> = {};
+    
+    for (const [key, value] of Object.entries(properties)) {
+      let fieldSchema = jsonSchemaPropertyToZod(value as any);
+      
+      // Handle optional fields
+      if (!required.includes(key)) {
+        fieldSchema = fieldSchema.optional();
+      }
+      
+      zodFields[key] = fieldSchema;
+    }
+    
+    return Object.keys(zodFields).length > 0 ? z.object(zodFields) : z.object({});
+  }
+  
+  return z.object({});
+}
+
+// Helper function to convert a JSON Schema property to Zod type
+function jsonSchemaPropertyToZod(property: any): z.ZodTypeAny {
+  if (!property || typeof property !== 'object') {
+    return z.any();
+  }
+
+  const { type, items } = property;
+
+  switch (type) {
+    case 'string':
+      return z.string();
+    case 'number':
+      return z.number();
+    case 'integer':
+      return z.number().int();
+    case 'boolean':
+      return z.boolean();
+    case 'array':
+      if (items) {
+        return z.array(jsonSchemaPropertyToZod(items));
+      }
+      return z.array(z.any());
+    case 'object':
+      return jsonSchemaToZodObject(property);
+    default:
+      return z.any();
+  }
+}
+
+// Helper function to get MCP tools for the AI SDK
+async function getMcpToolsForAI(userId: string) {
+  const mcpTools: Record<string, any> = {};
+  const mcpActiveTools: string[] = [];
+
+  try {
+    console.log('🔧 Getting MCP client instance for user:', userId);
+    const mcpClient = getMcpClientInstance(userId);
+    
+    if (!mcpClient || mcpClient.isConnecting) {
+      console.log('⏳ MCP client not ready or still connecting');
+      return { mcpTools, mcpActiveTools };
+    }
+
+    // Get all connected and enabled servers
+    const servers = mcpClient.getServers();
+    const enabledServers = servers.filter(
+      server => !server.disabled && server.status === 'connected' && server.tools
+    );
+
+    console.log('🔧 Available MCP servers:', enabledServers.map(s => s.name));
+
+    for (const server of enabledServers) {
+      if (!server.tools) continue;
+
+      for (const mcpTool of server.tools) {
+        // Create a unique tool name with server prefix
+        const toolName = `${server.name}__${mcpTool.name}`;
+        
+        // Convert JSON Schema to Zod schema for parameters
+        let parametersSchema: z.ZodTypeAny = z.object({});
+        
+        if (mcpTool.inputSchema) {
+          try {
+            parametersSchema = jsonSchemaToZodObject(mcpTool.inputSchema);
+          } catch (error) {
+            console.warn(`Failed to convert JSON schema to Zod for tool ${toolName}:`, error);
+            parametersSchema = z.object({});
+          }
+        }
+
+        mcpTools[toolName] = tool({
+          description: mcpTool.description || `MCP tool: ${mcpTool.name} from ${server.name}`,
+          parameters: parametersSchema,
+          execute: async (args: any) => {
+            console.log(`🛠️ Executing MCP tool: ${toolName} with args:`, args);
+            try {
+              const result = await mcpClient.callTool(server.name, mcpTool.name, args);
+              console.log(`✅ MCP tool result for ${toolName}:`, result);
+              return result;
+            } catch (error) {
+              console.error(`❌ MCP tool execution failed for ${toolName}:`, error);
+              throw error;
+            }
+          }
+        });
+        
+        mcpActiveTools.push(toolName);
+      }
+    }
+
+    console.log('🔧 MCP tools ready:', mcpActiveTools);
+    return { mcpTools, mcpActiveTools };
+
+  } catch (error) {
+    console.error('❌ Failed to initialize MCP tools:', error);
+    return { mcpTools, mcpActiveTools };
+  }
 }
 
 export async function POST(request: Request) {
@@ -107,18 +233,6 @@ export async function POST(request: Request) {
 
     const userType: UserType = session.user.type;
     console.log('👤 User type:', userType);
-
-    // Rate limiting disabled
-    // const messageCount = await getMessageCountByUserId({
-    //   id: session.user.id,
-    //   differenceInHours: 24,
-    // });
-    // console.log('📊 Message count check:', { messageCount, maxAllowed: entitlementsByUserType[userType].maxMessagesPerDay });
-
-    // if (messageCount > entitlementsByUserType[userType].maxMessagesPerDay) {
-    //   console.error('❌ Rate limit exceeded');
-    //   return new ChatSDKError('rate_limit:chat').toResponse();
-    // }
 
     const chat = await getChatById({ id });
     console.log('💬 Chat lookup:', { chatExists: !!chat, chatId: id });
@@ -184,79 +298,8 @@ export async function POST(request: Request) {
       ),
     );
 
-    // Get MCP client and tools for this user
-    let mcpToolRegistry: ToolRegistry | null = null;
-    let mcpTools: Record<string, any> = {};
-    let mcpActiveTools: string[] = [];
-    
-    try {
-      const mcpClient = await getMCPClientForUser(session.user.id, session.user.email);
-      if (mcpClient && !mcpClient.isConnecting) {
-        mcpToolRegistry = new ToolRegistry();
-        mcpToolRegistry.rebuild(mcpClient.connections, mcpClient);
-        
-        // Convert MCP tools to the format expected by the AI SDK
-        const mcpToolDefs = mcpToolRegistry.list();
-        console.log('🔧 Available MCP tools:', mcpToolDefs.map(t => t.name));
-        
-        for (const toolDef of mcpToolDefs) {
-          // Convert JSON Schema to Zod schema for parameters
-          let parametersSchema = z.object({});
-          if (toolDef.parameters && typeof toolDef.parameters === 'object') {
-            try {
-              // Create a simple zod schema from the JSON schema properties
-              const properties = toolDef.parameters.properties || {};
-              const zodFields: Record<string, z.ZodTypeAny> = {};
-              
-              for (const [key, value] of Object.entries(properties)) {
-                const prop = value as any;
-                if (prop.type === 'string') {
-                  zodFields[key] = z.string();
-                } else if (prop.type === 'number') {
-                  zodFields[key] = z.number();
-                } else if (prop.type === 'boolean') {
-                  zodFields[key] = z.boolean();
-                } else if (prop.type === 'array') {
-                  zodFields[key] = z.array(z.any());
-                } else {
-                  zodFields[key] = z.any();
-                }
-                
-                // Handle optional fields
-                if (!toolDef.parameters.required?.includes(key)) {
-                  zodFields[key] = zodFields[key].optional();
-                }
-              }
-              
-              if (Object.keys(zodFields).length > 0) {
-                parametersSchema = z.object(zodFields);
-              }
-            } catch (error) {
-              console.warn(`Failed to convert JSON schema to Zod for tool ${toolDef.name}:`, error);
-              parametersSchema = z.object({});
-            }
-          }
-
-          mcpTools[toolDef.name] = tool({
-            description: toolDef.description || `MCP tool: ${toolDef.name}`,
-            parameters: parametersSchema,
-            execute: async (args: any) => {
-              if (!mcpToolRegistry) {
-                throw new Error('MCP tool registry not available');
-              }
-              console.log(`🛠️ Executing MCP tool: ${toolDef.name} with args:`, args);
-              const result = await mcpToolRegistry.invoke(toolDef.name, args);
-              console.log(`✅ MCP tool result for ${toolDef.name}:`, result);
-              return result;
-            }
-          });
-          mcpActiveTools.push(toolDef.name);
-        }
-      }
-    } catch (error) {
-      console.error('❌ Failed to initialize MCP tools:', error);
-      // Continue without MCP tools rather than failing the entire request
-    }
+    // Get MCP tools for this user
+    const { mcpTools, mcpActiveTools } = await getMcpToolsForAI(session.user.id);
 
     console.log('🌊 Creating data stream with streamId:', streamId);
     const stream = createDataStream({

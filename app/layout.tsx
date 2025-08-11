@@ -2,7 +2,6 @@ import { Toaster } from 'sonner';
 import type { Metadata } from 'next';
 import { Geist, Geist_Mono } from 'next/font/google';
 import { ThemeProvider } from '@/components/theme-provider';
-import { MCPProvider } from '@/lib/mcp/context';
 import Script from 'next/script';
 
 import './globals.css';
@@ -82,9 +81,7 @@ export default async function RootLayout({
         >
           <Toaster position="top-center" />
           <SessionProvider>
-            <MCPProvider>
-              {children}
-            </MCPProvider>
+            {children}
           </SessionProvider>
         </ThemeProvider>
         <Script 
