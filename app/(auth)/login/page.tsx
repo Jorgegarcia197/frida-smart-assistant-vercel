@@ -10,7 +10,6 @@ import { SubmitButton } from '@/components/submit-button';
 
 import { login, type LoginActionState } from '../actions';
 import { useSession } from 'next-auth/react';
-import { initializeMcpForUser } from '@/lib/mcp/startup';
 
 export default function Page() {
   const router = useRouter();
@@ -25,7 +24,7 @@ export default function Page() {
     },
   );
 
-  const { update: updateSession, data: session } = useSession();
+  const { update: updateSession } = useSession();
 
   useEffect(() => {
     if (!state || !state.status) return;
@@ -42,18 +41,13 @@ export default function Page() {
         type: 'error',
         description: 'Failed validating your submission!',
       });
-    } else if (state.status === 'success' && !isSuccessful) {
+    } else if (state.status === 'success') {
       console.log('Login successful, redirecting...');
       setIsSuccessful(true);
-      updateSession().then(() => {
-        // Get user ID from session after update
-        if (session?.user?.id) {
-          initializeMcpForUser(session.user.id);
-        }
-      });
+      updateSession();
       router.push('/');
     }
-  }, [state?.status, router, isSuccessful, updateSession, session]);
+  }, [state?.status, router, updateSession]);
 
   const handleSubmit = (formData: FormData) => {
     setEmail(formData.get('email') as string);

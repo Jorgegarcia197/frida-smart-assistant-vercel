@@ -80,9 +80,7 @@ export default async function RootLayout({
           disableTransitionOnChange
         >
           <Toaster position="top-center" />
-          <SessionProvider>
-            {children}
-          </SessionProvider>
+          <SessionProvider>{children}</SessionProvider>
         </ThemeProvider>
         <Script 
           src="https://cdn.jsdelivr.net/pyodide/v0.23.4/full/pyodide.js"
