@@ -174,6 +174,7 @@ export class MCPClient {
           await this.newConnectToServer(name, config);
         } catch (error) {
           console.error(`Failed to connect to new MCP server ${name}:`, error);
+          throw error;
         }
       } else if (
         !deepEqual(JSON.parse(currentConnection.server.config), config)
@@ -600,6 +601,7 @@ export class MCPClient {
         await this.newConnectToServer(serverName, JSON.parse(config));
       } catch (error) {
         console.error(`Failed to restart connection for ${serverName}:`, error);
+        throw error;
       }
     }
 

@@ -131,11 +131,10 @@ const MCPHubContent = ({ setIsMCPHubOpen }: MCPHubContentProps) => {
 
     try {
       // Restart logic
-      console.log(`Restarting server: ${serverName}`);
       await mcpClient?.restartConnection(serverName);
 
       // Show success toast
-      toast.success(`Server "${serverName}" restarted successfully`);
+      toast.success(`MCP server "${serverName}" restarted successfully`);
 
       // Update the servers list
       setMcpServers(mcpClient?.getServers() ?? []);
