@@ -274,12 +274,6 @@ const MCPHubContent = ({ setIsMCPHubOpen }: MCPHubContentProps) => {
 
   // ------------------------------------------------------------ Effects ------------------------------------------------------------
 
-  useEffect(() => {
-    if (data?.user?.id && !isGuest) {
-      getServers();
-    }
-  }, [data?.user?.id, isGuest, getServers]);
-
   // Refresh servers when coming back from background (e.g., after navigation)
   useEffect(() => {
     const handleVisibilityChange = () => {
