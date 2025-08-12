@@ -4,6 +4,7 @@ import { AppSidebar } from '@/components/app-sidebar';
 import { SidebarInset, SidebarProvider } from '@/components/ui/sidebar';
 import { auth } from '../(auth)/auth';
 import Script from 'next/script';
+import { initializeMcpForUser } from '@/lib/mcp/startup';
 
 export const experimental_ppr = true;
 
@@ -14,6 +15,14 @@ export default async function Layout({
 }) {
   const [session, cookieStore] = await Promise.all([auth(), cookies()]);
   const isCollapsed = cookieStore.get('sidebar:state')?.value !== 'true';
+
+  // Initialize MCP client for authenticated users
+  if (session?.user?.id) {
+    // Fire and forget - don't await to avoid blocking the UI
+    initializeMcpForUser(session.user.id).catch(error => {
+      console.error('Failed to initialize MCP on layout:', error);
+    });
+  }
 
   return (
     <>
