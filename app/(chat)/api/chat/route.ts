@@ -136,10 +136,21 @@ async function getMcpToolsForAI(userId: string) {
       return { mcpTools, mcpActiveTools };
     }
 
+    // Ensure MCP servers are initialized
+    try {
+      await mcpClient.initializeMcpServers();
+      console.log('✅ MCP servers initialization completed');
+    } catch (initError) {
+      console.warn('⚠️ MCP server initialization failed:', initError);
+      // Continue anyway, might have some cached connections
+    }
+
     // Get all connected and enabled servers
     const servers = mcpClient.getServers();
+    console.log('🔧 All MCP servers:', servers.map(s => ({ name: s.name, status: s.status, disabled: s.disabled, hasTools: !!s.tools })));
+    
     const enabledServers = servers.filter(
-      server => !server.disabled && server.status === 'connected' && server.tools
+      server => !server.disabled && server.status === 'connected' && server.tools && server.tools.length > 0
     );
 
     console.log('🔧 Available MCP servers:', enabledServers.map(s => s.name));
