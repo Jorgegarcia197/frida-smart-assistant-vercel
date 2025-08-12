@@ -274,18 +274,6 @@ const MCPHubContent = ({ setIsMCPHubOpen }: MCPHubContentProps) => {
 
   // ------------------------------------------------------------ Effects ------------------------------------------------------------
 
-  // Refresh servers when coming back from background (e.g., after navigation)
-  useEffect(() => {
-    const handleVisibilityChange = () => {
-      if (!document.hidden && data?.user?.id && !isGuest && !isLoading) {
-        getServers();
-      }
-    };
-
-    document.addEventListener('visibilitychange', handleVisibilityChange);
-    return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
-  }, [data?.user?.id, isGuest, isLoading, getServers]);
-
   // Show error toast when MCP error occurs
   useEffect(() => {
     if (mcpError) {

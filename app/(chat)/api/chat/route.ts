@@ -137,12 +137,17 @@ async function getMcpToolsForAI(userId: string) {
     }
 
     // Ensure MCP servers are initialized
-    try {
-      await mcpClient.initializeMcpServers();
-      console.log('✅ MCP servers initialization completed');
-    } catch (initError) {
-      console.warn('⚠️ MCP server initialization failed:', initError);
-      // Continue anyway, might have some cached connections
+    if (mcpClient.connections.length === 0) {
+      console.log('🔧 No connections found, initializing MCP servers...');
+      try {
+        await mcpClient.initializeMcpServers();
+        console.log('✅ MCP servers initialization completed');
+      } catch (initError) {
+        console.warn('⚠️ MCP server initialization failed:', initError);
+        // Continue anyway, might have some cached connections
+      }
+    } else {
+      console.log('✅ Using existing MCP connections');
     }
 
     // Get all connected and enabled servers

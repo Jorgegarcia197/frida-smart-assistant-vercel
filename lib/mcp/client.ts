@@ -86,18 +86,23 @@ export class MCPClient {
       const mcpServersConfig = await getMcpServers(this.userId);
 
       console.log(
-        "MCP servers in initializeMcpServers of client.ts:",
-        mcpServersConfig
+        "[MCPClient] MCP servers config from Firebase:",
+        JSON.stringify(mcpServersConfig, null, 2)
       );
 
       if (mcpServersConfig && mcpServersConfig.mcpServers) {
         await this.updateServerConnections(mcpServersConfig.mcpServers);
-        console.log(`Successfully initialized ${Object.keys(mcpServersConfig.mcpServers).length} MCP server(s) for user ${this.userId}`);
+        console.log(`[MCPClient] Successfully initialized ${Object.keys(mcpServersConfig.mcpServers).length} MCP server(s) for user ${this.userId}`);
+        console.log(`[MCPClient] Current connections after init:`, this.connections.map(c => ({
+          name: c.server.name,
+          status: c.server.status,
+          disabled: c.server.disabled
+        })));
       } else {
-        console.log(`No MCP servers found to initialize for user ${this.userId}`);
+        console.log(`[MCPClient] No MCP servers found to initialize for user ${this.userId}`);
       }
     } catch (error) {
-      console.error(`Error during MCP server initialization for user ${this.userId}:`, error);
+      console.error(`[MCPClient] Error during MCP server initialization for user ${this.userId}:`, error);
       throw error; // Re-throw to trigger retry logic
     }
   }
@@ -626,6 +631,8 @@ export class MCPClient {
         await this.deleteConnection(serverName);
         // Try to connect again using existing config
         await this.newConnectToServer(serverName, JSON.parse(config));
+        // Update that it is no longer disabled
+        await this.toggleServerDisabledMCP(serverName, false);
       } catch (error) {
         console.error(`Failed to restart connection for ${serverName}:`, error);
         throw error;

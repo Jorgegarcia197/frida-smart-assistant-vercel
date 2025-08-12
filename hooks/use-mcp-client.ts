@@ -207,12 +207,12 @@ export function useMcpClient(userId: string): UseMcpClientReturn {
     [makeRequest]
   );
 
-  // Auto-initialize on mount when userId is available
+  // Auto-initialize servers when userId changes
   useEffect(() => {
-    if (userId && !initialized && !loading) {
+    if (userId && !initialized) {
       getServers();
     }
-  }, [userId, initialized, loading, getServers]);
+  }, [userId, initialized, getServers]);
 
   return {
     servers,

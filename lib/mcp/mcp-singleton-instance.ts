@@ -15,7 +15,7 @@ export function getMcpClientInstance(userId: string): MCPClient {
       // Cleanup previous instance
       mcpClientInstance.disconnectAll().catch(console.error);
     } else {
-      console.log(`Creating new MCP client instance for user ${userId}`);
+      console.log(`Creating MCP client instance for user ${userId}`);
     }
     mcpClientInstance = new MCPClient(userId);
   }
