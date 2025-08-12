@@ -22,7 +22,7 @@ export async function POST(request: NextRequest) {
     
     return NextResponse.json({ success: true });
   } catch (error) {
-    console.error('Error adding server:', error);
+    console.error('Error adding sse server:', error);
     return NextResponse.json(
       { error: error instanceof Error ? error.message : 'Failed to add server' }, 
       { status: 500 }

@@ -1,4 +1,4 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 import { McpServer } from "@/lib/mcp/types";
 import { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 
@@ -9,6 +9,7 @@ interface UseMcpClientReturn {
   // Server management
   getServers: () => Promise<void>;
   addRemoteServer: (serverName: string, serverUrl: string) => Promise<void>;
+  addStdioServer: () => Promise<void>;
   toggleServerDisabled: (
     serverName: string,
     disabled: boolean
@@ -27,6 +28,7 @@ export function useMcpClient(userId: string): UseMcpClientReturn {
   const [servers, setServers] = useState<McpServer[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [initialized, setInitialized] = useState(false);
 
   const makeRequest = useCallback(
     async (url: string, options: RequestInit = {}) => {
@@ -50,11 +52,14 @@ export function useMcpClient(userId: string): UseMcpClientReturn {
   );
 
   const getServers = useCallback(async () => {
+    if (!userId) return;
+    
     setLoading(true);
     setError(null);
     try {
       const data = await makeRequest("/api/mcp/servers");
       setServers(data.servers);
+      setInitialized(true);
     } catch (err) {
       const errorMessage =
         err instanceof Error ? err.message : "Failed to get servers";
@@ -63,14 +68,14 @@ export function useMcpClient(userId: string): UseMcpClientReturn {
     } finally {
       setLoading(false);
     }
-  }, [makeRequest]);
+  }, [makeRequest, userId]);
 
   const addRemoteServer = useCallback(
     async (serverName: string, serverUrl: string) => {
       setLoading(true);
       setError(null);
       try {
-        await makeRequest("/api/mcp/servers/add", {
+        await makeRequest("/api/mcp/servers/add-sse", {
           method: "POST",
           body: JSON.stringify({ serverName, serverUrl }),
         });
@@ -78,7 +83,29 @@ export function useMcpClient(userId: string): UseMcpClientReturn {
         await getServers();
       } catch (err) {
         const errorMessage =
-          err instanceof Error ? err.message : "Failed to add server";
+          err instanceof Error ? err.message : "Failed to add sse server";
+        setError(errorMessage);
+        throw err;
+      } finally {
+        setLoading(false);
+      }
+    },
+    [makeRequest, getServers]
+  );
+  
+  const addStdioServer = useCallback(
+    async () => {
+      setLoading(true);
+      setError(null);
+      try {
+        await makeRequest("/api/mcp/servers/add-stdio", {
+          method: "POST",
+        });
+        // Refresh servers list
+        await getServers();
+      } catch (err) {
+        const errorMessage =
+          err instanceof Error ? err.message : "Failed to add stdio server";
         setError(errorMessage);
         throw err;
       } finally {
@@ -180,6 +207,13 @@ export function useMcpClient(userId: string): UseMcpClientReturn {
     [makeRequest]
   );
 
+  // Auto-initialize on mount when userId is available
+  useEffect(() => {
+    if (userId && !initialized && !loading) {
+      getServers();
+    }
+  }, [userId, initialized, loading, getServers]);
+
   return {
     servers,
     loading,
@@ -190,5 +224,6 @@ export function useMcpClient(userId: string): UseMcpClientReturn {
     restartServer,
     deleteServer,
     callTool,
+    addStdioServer,
   };
 }

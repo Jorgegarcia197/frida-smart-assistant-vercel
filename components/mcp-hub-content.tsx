@@ -47,7 +47,7 @@ import { guestRegex } from "@/lib/constants";
 import { useMcpClient } from "@/hooks/use-mcp-client";
 
 // Server queries (only for config dialog)
-import { getMcpServers } from "@/lib/mcp/queries";
+import { getMcpServers, saveMcpServers } from "@/lib/mcp/queries";
 
 type MCPHubContentProps = {
   setIsMCPHubOpen: (isOpen: boolean) => void;
@@ -68,7 +68,7 @@ const MCPHubContent = ({ setIsMCPHubOpen }: MCPHubContentProps) => {
     toggleServerDisabled,
     restartServer: restartServerHook,
     deleteServer,
-    callTool,
+    addStdioServer
   } = useMcpClient(data?.user?.id ?? "");
 
   // State for form inputs
@@ -173,6 +173,7 @@ const MCPHubContent = ({ setIsMCPHubOpen }: MCPHubContentProps) => {
   };
 
   const saveConfigChanges = async () => {
+    toast.info("Saving MCP server list. This may take a few seconds...");
     setIsSaving(true);
     setJsonError("");
 
@@ -185,13 +186,20 @@ const MCPHubContent = ({ setIsMCPHubOpen }: MCPHubContentProps) => {
         return;
       }
 
-      // TODO: Implement server action for saving config
-      console.log("Configuration saved:", parsedConfig);
+      // Save the config to Firebase
+      await saveMcpServers(data?.user?.id ?? "", parsedConfig);
+
+      // Call the addStdioServer hook to add the stdio server and actually connect to it
+      await addStdioServer();
+
+      // Show success toast
+      toast.success("MCP server list updated successfully");
 
       // Close dialog on successful save
       setIsConfigDialogOpen(false);
       await getServers(); // Refresh servers list
     } catch (error) {
+      toast.error("Error saving MCP server list. Please try again.");
       if (error instanceof SyntaxError) {
         setJsonError("Invalid JSON format. Please check your syntax.");
       } else {
@@ -271,6 +279,18 @@ const MCPHubContent = ({ setIsMCPHubOpen }: MCPHubContentProps) => {
       getServers();
     }
   }, [data?.user?.id, isGuest, getServers]);
+
+  // Refresh servers when coming back from background (e.g., after navigation)
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      if (!document.hidden && data?.user?.id && !isGuest && !isLoading) {
+        getServers();
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
+  }, [data?.user?.id, isGuest, isLoading, getServers]);
 
   // Show error toast when MCP error occurs
   useEffect(() => {
@@ -428,7 +448,7 @@ const MCPHubContent = ({ setIsMCPHubOpen }: MCPHubContentProps) => {
               </div>
             </div>
 
-            {/* <div className="relative">
+            <div className="relative">
               <div className="absolute inset-0 flex items-center">
                 <span className="w-full border-t" />
               </div>
@@ -437,10 +457,10 @@ const MCPHubContent = ({ setIsMCPHubOpen }: MCPHubContentProps) => {
                   or
                 </span>
               </div>
-            </div> */}
+            </div>
 
             {/* Configure STDIO Button */}
-            {/* <Dialog
+            <Dialog
               open={isConfigDialogOpen}
               onOpenChange={setIsConfigDialogOpen}
             >
@@ -504,7 +524,7 @@ const MCPHubContent = ({ setIsMCPHubOpen }: MCPHubContentProps) => {
                   </Button>
                 </div>
               </DialogContent>
-            </Dialog> */}
+            </Dialog>
 
             {/* MCP Servers List */}
             <div className="space-y-2">

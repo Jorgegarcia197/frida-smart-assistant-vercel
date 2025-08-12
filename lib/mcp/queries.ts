@@ -59,27 +59,6 @@ export async function saveMcpServers(
 }
 
 /**
- * Add or update a single MCP server in the configuration
- */
-// export async function addMcpServer(
-//   userId: string,
-//   server: McpServer
-// ): Promise<void> {
-//   const currentServers = await getMcpServers(userId);
-
-//   // Check if server already exists and update, or add new
-//   const existingIndex = currentServers.findIndex((s) => s.name === server.name);
-
-//   if (existingIndex >= 0) {
-//     currentServers[existingIndex] = server;
-//   } else {
-//     currentServers.push(server);
-//   }
-
-//   await saveMcpServers(userId, currentServers);
-// }
-
-/**
  * Remove a specific MCP server from the configuration
  */
 // export async function removeMcpServer(

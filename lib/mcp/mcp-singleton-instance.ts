@@ -11,8 +11,11 @@ export function getMcpClientInstance(userId: string): MCPClient {
   if (!mcpClientInstance || mcpClientInstance.userId !== userId) {
     // If no instance exists or user changed, create new instance
     if (mcpClientInstance) {
+      console.log(`Switching MCP client from user ${mcpClientInstance.userId} to ${userId}`);
       // Cleanup previous instance
       mcpClientInstance.disconnectAll().catch(console.error);
+    } else {
+      console.log(`Creating new MCP client instance for user ${userId}`);
     }
     mcpClientInstance = new MCPClient(userId);
   }

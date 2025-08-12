@@ -1,7 +1,7 @@
 // MCP imports
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js";
-// import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
+import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 
 // Deep equal
 import deepEqual from "fast-deep-equal";
@@ -76,22 +76,29 @@ export class MCPClient {
 
   constructor(userId: string) {
     this.userId = userId;
-    this.initializeMcpServers();
   }
 
   /**
    * Initializes MCP servers that were already added from the db.
    */
   public async initializeMcpServers(): Promise<void> {
-    const mcpServersConfig = await getMcpServers(this.userId);
+    try {
+      const mcpServersConfig = await getMcpServers(this.userId);
 
-    console.log(
-      "MCP servers in initializeMcpServers of client.ts:",
-      mcpServersConfig
-    );
+      console.log(
+        "MCP servers in initializeMcpServers of client.ts:",
+        mcpServersConfig
+      );
 
-    if (mcpServersConfig) {
-      await this.updateServerConnections(mcpServersConfig.mcpServers);
+      if (mcpServersConfig && mcpServersConfig.mcpServers) {
+        await this.updateServerConnections(mcpServersConfig.mcpServers);
+        console.log(`Successfully initialized ${Object.keys(mcpServersConfig.mcpServers).length} MCP server(s) for user ${this.userId}`);
+      } else {
+        console.log(`No MCP servers found to initialize for user ${this.userId}`);
+      }
+    } catch (error) {
+      console.error(`Error during MCP server initialization for user ${this.userId}:`, error);
+      throw error; // Re-throw to trigger retry logic
     }
   }
 
@@ -233,27 +240,23 @@ export class MCPClient {
         }
       );
 
-      // let transport: StdioClientTransport | SSEClientTransport;
-      let transport: SSEClientTransport;
+      let transport: StdioClientTransport | SSEClientTransport;
 
       if (config.transportType === "sse") {
         console.log("Creating SSE transport for:", name);
         transport = new SSEClientTransport(new URL(config.url), {});
       } else {
         console.log("Creating stdio transport for:", name);
-        throw new Error(
-          "Only SSE transport is currently supported in this environment"
-        );
-        // transport = new StdioClientTransport({
-        //   command: config.command,
-        //   args: config.args,
-        //   env: {
-        //     ...config.env,
-        //     ...(process.env.PATH ? { PATH: process.env.PATH } : {}),
-        //     // ...(process.env.NODE_PATH ? { NODE_PATH: process.env.NODE_PATH } : {}),
-        //   },
-        //   stderr: "pipe", // necessary for stderr to be available
-        // });
+        transport = new StdioClientTransport({
+          command: config.command,
+          args: config.args,
+          env: {
+            ...config.env,
+            ...(process.env.PATH ? { PATH: process.env.PATH } : {}),
+            // ...(process.env.NODE_PATH ? { NODE_PATH: process.env.NODE_PATH } : {}),
+          },
+          stderr: "pipe", // necessary for stderr to be available
+        });
       }
 
       transport.onerror = async (error) => {
@@ -288,40 +291,40 @@ export class MCPClient {
       };
       this.connections.push(connection);
 
-      // if (config.transportType === "stdio") {
-      //   // transport.stderr is only available after the process has been started. However we can't start it separately from the .connect() call because it also starts the transport. And we can't place this after the connect call since we need to capture the stderr stream before the connection is established, in order to capture errors during the connection process.
-      //   // As a workaround, we start the transport ourselves, and then monkey-patch the start method to no-op so that .connect() doesn't try to start it again.
-      //   await transport.start();
-      //   const stderrStream = (transport as StdioClientTransport).stderr;
-      //   if (stderrStream) {
-      //     stderrStream.on("data", async (data: Buffer) => {
-      //       const output = data.toString();
-      //       // Check if output contains INFO level log
-      //       const isInfoLog = !/\berror\b/i.test(output);
+      if (config.transportType === "stdio") {
+        // transport.stderr is only available after the process has been started. However we can't start it separately from the .connect() call because it also starts the transport. And we can't place this after the connect call since we need to capture the stderr stream before the connection is established, in order to capture errors during the connection process.
+        // As a workaround, we start the transport ourselves, and then monkey-patch the start method to no-op so that .connect() doesn't try to start it again.
+        await transport.start();
+        const stderrStream = (transport as StdioClientTransport).stderr;
+        if (stderrStream) {
+          stderrStream.on("data", async (data: Buffer) => {
+            const output = data.toString();
+            // Check if output contains INFO level log
+            const isInfoLog = !/\berror\b/i.test(output);
 
-      //       if (isInfoLog) {
-      //         // Log normal informational messages
-      //         console.info(`Server "${name}" info:`, output);
-      //       } else {
-      //         // Treat as error log
-      //         console.error(`Server "${name}" stderr:`, output);
-      //         const connection = this.connections.find(
-      //           (conn) => conn.server.name === name
-      //         );
-      //         if (connection) {
-      //           // this.appendErrorMessage(connection, output);
-      //           // Only notify webview if server is already disconnected
-      //           // if (connection.server.status === "disconnected") {
-      //           //   await this.notifyWebviewOfServerChanges();
-      //           // }
-      //         }
-      //       }
-      //     });
-      //   } else {
-      //     console.error(`No stderr stream for ${name}`);
-      //   }
-      //   transport.start = async () => {}; // No-op now, .connect() won't fail
-      // }
+            if (isInfoLog) {
+              // Log normal informational messages
+              console.info(`Server "${name}" info:`, output);
+            } else {
+              // Treat as error log
+              console.error(`Server "${name}" stderr:`, output);
+              const connection = this.connections.find(
+                (conn) => conn.server.name === name
+              );
+              if (connection) {
+                // this.appendErrorMessage(connection, output);
+                // Only notify webview if server is already disconnected
+                // if (connection.server.status === "disconnected") {
+                //   await this.notifyWebviewOfServerChanges();
+                // }
+              }
+            }
+          });
+        } else {
+          console.error(`No stderr stream for ${name}`);
+        }
+        transport.start = async () => {}; // No-op now, .connect() won't fail
+      }
 
       // Connect
       await client.connect(transport);
@@ -493,6 +496,30 @@ export class MCPClient {
       console.log("Successfully added remote MCP server:", serverName);
     } catch (error) {
       console.error("Failed to add remote MCP server:", error);
+      throw error;
+    }
+  }
+
+  /**
+   * Adds a new stdio MCP server to the firebase and updates the server connections.
+   */
+  public async addStdioServer(): Promise<void> {
+    console.log("Adding stdio MCP server");
+
+    try {
+      // Get current MCP servers for this user
+      const currentServers = await getMcpServers(this.userId);
+
+      if (!currentServers) {
+        throw new Error("Failed to read MCP config");
+      }
+
+      // Update server connections
+      await this.updateServerConnections(currentServers.mcpServers);
+
+      console.log("Successfully added stdio MCP server");
+    } catch (error) {
+      console.error("Failed to add stdio MCP server:", error);
       throw error;
     }
   }

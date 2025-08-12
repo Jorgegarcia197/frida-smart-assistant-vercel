@@ -10,7 +10,6 @@ import { SubmitButton } from '@/components/submit-button';
 
 import { login, type LoginActionState } from '../actions';
 import { useSession } from 'next-auth/react';
-import { initializeMcpForUser } from '@/lib/mcp/startup';
 
 export default function Page() {
   const router = useRouter();
@@ -46,12 +45,8 @@ export default function Page() {
       console.log('Login successful, redirecting...');
       setIsSuccessful(true);
       updateSession().then(() => {
-        // Get user ID from session after update
-        if (session?.user?.id) {
-          initializeMcpForUser(session.user.id);
-        }
+        router.push('/');
       });
-      router.push('/');
     }
   }, [state?.status, router, isSuccessful, updateSession, session]);
 
