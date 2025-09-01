@@ -1,9 +1,9 @@
-import { CoreMessage, LanguageModelV1StreamPart } from 'ai';
+import { ModelMessage, LanguageModelV1StreamPart } from 'ai';
 import { TEST_PROMPTS } from './basic';
 
 export function compareMessages(
-  firstMessage: CoreMessage,
-  secondMessage: CoreMessage,
+  firstMessage: ModelMessage,
+  secondMessage: ModelMessage,
 ): boolean {
   if (firstMessage.role !== secondMessage.role) return false;
 
@@ -56,7 +56,7 @@ const reasoningToDeltas = (text: string): LanguageModelV1StreamPart[] => {
 };
 
 export const getResponseChunksByPrompt = (
-  prompt: CoreMessage[],
+  prompt: ModelMessage[],
   isReasoningEnabled: boolean = false,
 ): Array<LanguageModelV1StreamPart> => {
   const recentMessage = prompt.at(-1);
