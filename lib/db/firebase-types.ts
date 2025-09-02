@@ -18,14 +18,24 @@ export interface Chat {
   visibility: VisibilityType;
 }
 
+/** Legacy shape for persisted attachments (AI SDK v4-era). */
+export interface LegacyAttachment {
+  contentType: string;
+  name: string;
+  url: string;
+}
+
 // Message collection document (subcollection of Chat)
 export interface DBMessage {
   id: string;
   chatId: string;
   role: string;
   parts: any;
-  attachments: any;
+  attachments: LegacyAttachment[];
   createdAt: Date;
+
+  // There are some documents that reference experimental_attachments
+  experimental_attachments?: LegacyAttachment[];
 }
 
 // Vote collection document (subcollection of Chat)
@@ -63,4 +73,4 @@ export interface Stream {
   id: string;
   chatId: string;
   createdAt: Date;
-} 
+}
