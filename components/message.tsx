@@ -19,6 +19,15 @@ import { MessageReasoning } from './message-reasoning';
 import type { UseChatHelpers } from '@ai-sdk/react';
 import { McpToolCard } from './mcp-tool-card';
 import type { ChatMessage } from '@/lib/types';
+import {
+  Tool,
+  ToolContent,
+  ToolHeader,
+  ToolInput,
+  ToolOutput,
+} from './elements/tool';
+import { MessageContent } from './elements/message';
+import { Response } from './elements/response';
 
 const PurePreviewMessage = ({
   chatId,
@@ -43,7 +52,10 @@ const PurePreviewMessage = ({
 }) => {
   const [mode, setMode] = useState<'view' | 'edit'>('view');
 
-  /* FIXME(@ai-sdk-upgrade-v5): The `experimental_attachments` property has been replaced with the parts array. Please manually migrate following https://ai-sdk.dev/docs/migration-guides/migration-guide-5-0#attachments--file-parts */
+  const attachmentsFromMessage = message.parts.filter(
+    (part) => part.type === 'file',
+  );
+
   return (
     <AnimatePresence>
       <motion.div
@@ -54,41 +66,43 @@ const PurePreviewMessage = ({
         data-role={message.role}
       >
         <div
-          className={cn(
-            'flex gap-4 w-full group-data-[role=user]/message:ml-auto group-data-[role=user]/message:max-w-2xl',
-            {
-              'w-full': mode === 'edit',
-              'group-data-[role=user]/message:w-fit': mode !== 'edit',
-            },
-          )}
+          className={cn('flex items-start gap-3', {
+            'w-full': mode === 'edit',
+            'max-w-xl ml-auto justify-end mr-6':
+              message.role === 'user' && mode !== 'edit',
+            'justify-start -ml-3': message.role === 'assistant',
+          })}
         >
           {message.role === 'assistant' && (
-            <div className="size-8 flex items-center rounded-full justify-center ring-1 shrink-0 ring-border bg-background">
-              <div className="translate-y-px">
-                <SparklesIcon size={14} />
-              </div>
+            <div className="flex justify-center items-center mt-1 rounded-full ring-1 size-8 shrink-0 ring-border bg-background">
+              <SparklesIcon size={14} />
             </div>
           )}
 
           <div
-            className={cn('flex flex-col gap-4 w-full', {
+            className={cn('flex flex-col gap-4', {
               'min-h-96': message.role === 'assistant' && requiresScrollPadding,
+              'w-full': message.role === 'assistant',
+              'w-fit': message.role === 'user',
             })}
           >
-            {message.experimental_attachments &&
-              message.experimental_attachments.length > 0 && (
-                <div
-                  data-testid={`message-attachments`}
-                  className="flex flex-row justify-end gap-2"
-                >
-                  {message.experimental_attachments.map((attachment) => (
-                    <PreviewAttachment
-                      key={attachment.url}
-                      attachment={attachment}
-                    />
-                  ))}
-                </div>
-              )}
+            {attachmentsFromMessage.length > 0 && (
+              <div
+                data-testid={`message-attachments`}
+                className="flex flex-row gap-2 justify-end"
+              >
+                {attachmentsFromMessage.map((attachment) => (
+                  <PreviewAttachment
+                    key={attachment.url}
+                    attachment={{
+                      name: attachment.filename ?? 'file',
+                      contentType: attachment.mediaType,
+                      url: attachment.url,
+                    }}
+                  />
+                ))}
+              </div>
+            )}
 
             {message.parts?.map((part, index) => {
               const { type } = part;
@@ -127,7 +141,6 @@ const PurePreviewMessage = ({
                       )}
 
                       <MessageContent
-                        hello={world}
                         data-testid="message-content"
                         className={cn('justify-start items-start text-left', {
                           'bg-primary text-primary-foreground':
@@ -266,7 +279,10 @@ const PurePreviewMessage = ({
 
               // Is a MCP Tool
               if (type.startsWith('tool-') && type.includes('__')) {
-                const { toolName, toolCallId, state } = part;
+                // TODO: handle dynamic tools
+                const state = 'call';
+                const toolName = '';
+                const args = {};
 
                 if (state === 'call') {
                   <McpToolCard
