@@ -1,11 +1,12 @@
-import { z } from 'zod';
+import { z } from 'zod/v3';
 
 const textPartSchema = z.object({
   text: z.string().min(1).max(100000),
   type: z.enum(['text']),
 });
 
-export const postRequestBodySchema = z.object({
+export /* FIXME(@ai-sdk-upgrade-v5): The `experimental_attachments` property has been replaced with the parts array. Please manually migrate following https://ai-sdk.dev/docs/migration-guides/migration-guide-5-0#attachments--file-parts */
+const postRequestBodySchema = z.object({
   id: z.string().uuid(),
   message: z.object({
     id: z.string().uuid(),

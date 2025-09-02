@@ -61,18 +61,20 @@ export function Chat({
     id,
     initialMessages,
     experimental_throttle: 100,
-    sendExtraMessageFields: true,
     generateId: generateUUID,
     fetch: fetchWithErrorHandlers,
+
     experimental_prepareRequestBody: (body) => ({
       id,
       message: body.messages.at(-1),
       selectedChatModel: initialChatModel,
       selectedVisibilityType: visibilityType,
     }),
+
     onFinish: () => {
       mutate(unstable_serialize(getChatHistoryPaginationKey));
     },
+
     onError: (error) => {
       if (error instanceof ChatSDKError) {
         toast({
@@ -80,7 +82,7 @@ export function Chat({
           description: error.message,
         });
       }
-    },
+    }
   });
 
   const searchParams = useSearchParams();

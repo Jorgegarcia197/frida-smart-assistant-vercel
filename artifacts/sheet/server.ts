@@ -2,7 +2,7 @@ import { myProvider } from '@/lib/ai/providers';
 import { sheetPrompt, updateDocumentPrompt } from '@/lib/ai/prompts';
 import { createDocumentHandler } from '@/lib/artifacts/server';
 import { streamObject } from 'ai';
-import { z } from 'zod';
+import { z } from 'zod/v3';
 
 export const sheetDocumentHandler = createDocumentHandler<'sheet'>({
   kind: 'sheet',
@@ -26,9 +26,13 @@ export const sheetDocumentHandler = createDocumentHandler<'sheet'>({
         const { csv } = object;
 
         if (csv) {
-          dataStream.writeData({
-            type: 'sheet-delta',
-            content: csv,
+          dataStream.write({
+            'type': 'data',
+
+            'value': [{
+              type: 'sheet-delta',
+              content: csv,
+            }]
           });
 
           draftContent = csv;
@@ -36,9 +40,13 @@ export const sheetDocumentHandler = createDocumentHandler<'sheet'>({
       }
     }
 
-    dataStream.writeData({
-      type: 'sheet-delta',
-      content: draftContent,
+    dataStream.write({
+      'type': 'data',
+
+      'value': [{
+        type: 'sheet-delta',
+        content: draftContent,
+      }]
     });
 
     return draftContent;
@@ -63,9 +71,13 @@ export const sheetDocumentHandler = createDocumentHandler<'sheet'>({
         const { csv } = object;
 
         if (csv) {
-          dataStream.writeData({
-            type: 'sheet-delta',
-            content: csv,
+          dataStream.write({
+            'type': 'data',
+
+            'value': [{
+              type: 'sheet-delta',
+              content: csv,
+            }]
           });
 
           draftContent = csv;

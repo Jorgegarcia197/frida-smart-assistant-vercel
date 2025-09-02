@@ -74,7 +74,7 @@ export const getResponseChunksByPrompt = (
           type: 'finish',
           finishReason: 'stop',
           logprobs: undefined,
-          usage: { completionTokens: 10, promptTokens: 3 },
+          usage: { outputTokens: 10, inputTokens: 3 },
         },
       ];
     } else if (compareMessages(recentMessage, TEST_PROMPTS.USER_GRASS)) {
@@ -87,7 +87,7 @@ export const getResponseChunksByPrompt = (
           type: 'finish',
           finishReason: 'stop',
           logprobs: undefined,
-          usage: { completionTokens: 10, promptTokens: 3 },
+          usage: { outputTokens: 10, inputTokens: 3 },
         },
       ];
     }
@@ -100,7 +100,7 @@ export const getResponseChunksByPrompt = (
         type: 'finish',
         finishReason: 'stop',
         logprobs: undefined,
-        usage: { completionTokens: 10, promptTokens: 3 },
+        usage: { outputTokens: 10, inputTokens: 3 },
       },
     ];
   } else if (compareMessages(recentMessage, TEST_PROMPTS.USER_GRASS)) {
@@ -110,7 +110,7 @@ export const getResponseChunksByPrompt = (
         type: 'finish',
         finishReason: 'stop',
         logprobs: undefined,
-        usage: { completionTokens: 10, promptTokens: 3 },
+        usage: { outputTokens: 10, inputTokens: 3 },
       },
     ];
   } else if (compareMessages(recentMessage, TEST_PROMPTS.USER_SKY)) {
@@ -120,7 +120,7 @@ export const getResponseChunksByPrompt = (
         type: 'finish',
         finishReason: 'stop',
         logprobs: undefined,
-        usage: { completionTokens: 10, promptTokens: 3 },
+        usage: { outputTokens: 10, inputTokens: 3 },
       },
     ];
   } else if (compareMessages(recentMessage, TEST_PROMPTS.USER_NEXTJS)) {
@@ -131,7 +131,7 @@ export const getResponseChunksByPrompt = (
         type: 'finish',
         finishReason: 'stop',
         logprobs: undefined,
-        usage: { completionTokens: 10, promptTokens: 3 },
+        usage: { outputTokens: 10, inputTokens: 3 },
       },
     ];
   } else if (
@@ -143,7 +143,7 @@ export const getResponseChunksByPrompt = (
         type: 'finish',
         finishReason: 'stop',
         logprobs: undefined,
-        usage: { completionTokens: 10, promptTokens: 3 },
+        usage: { outputTokens: 10, inputTokens: 3 },
       },
     ];
   } else if (compareMessages(recentMessage, TEST_PROMPTS.USER_TEXT_ARTIFACT)) {
@@ -162,7 +162,7 @@ export const getResponseChunksByPrompt = (
         type: 'finish',
         finishReason: 'stop',
         logprobs: undefined,
-        usage: { completionTokens: 10, promptTokens: 3 },
+        usage: { outputTokens: 10, inputTokens: 3 },
       },
     ];
   } else if (
@@ -192,7 +192,7 @@ As we move forward, Silicon Valley continues to reinvent itself. While some pred
         type: 'finish',
         finishReason: 'stop',
         logprobs: undefined,
-        usage: { completionTokens: 10, promptTokens: 3 },
+        usage: { outputTokens: 10, inputTokens: 3 },
       },
     ];
   } else if (
@@ -207,7 +207,7 @@ As we move forward, Silicon Valley continues to reinvent itself. While some pred
         type: 'finish',
         finishReason: 'tool-calls',
         logprobs: undefined,
-        usage: { completionTokens: 10, promptTokens: 3 },
+        usage: { outputTokens: 10, inputTokens: 3 },
       },
     ];
   } else if (compareMessages(recentMessage, TEST_PROMPTS.GET_WEATHER_CALL)) {
@@ -223,7 +223,7 @@ As we move forward, Silicon Valley continues to reinvent itself. While some pred
         type: 'finish',
         finishReason: 'stop',
         logprobs: undefined,
-        usage: { completionTokens: 10, promptTokens: 3 },
+        usage: { outputTokens: 10, inputTokens: 3 },
       },
     ];
   } else if (compareMessages(recentMessage, TEST_PROMPTS.GET_WEATHER_RESULT)) {
@@ -233,7 +233,7 @@ As we move forward, Silicon Valley continues to reinvent itself. While some pred
         type: 'finish',
         finishReason: 'stop',
         logprobs: undefined,
-        usage: { completionTokens: 10, promptTokens: 3 },
+        usage: { outputTokens: 10, inputTokens: 3 },
       },
     ];
   }

@@ -7,7 +7,7 @@ import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js"
 import deepEqual from "fast-deep-equal";
 
 // Zod
-import { z } from "zod";
+import { z } from 'zod/v3';
 
 // Queries
 import { getMcpServers, saveMcpServers } from "./queries";
