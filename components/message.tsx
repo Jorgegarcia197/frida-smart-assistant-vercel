@@ -1,13 +1,11 @@
 'use client';
 
-import type { UIMessage } from 'ai';
 import cx from 'classnames';
 import { AnimatePresence, motion } from 'framer-motion';
 import { memo, useState } from 'react';
 import type { Vote } from '@/lib/db/firebase-types';
-import { DocumentToolCall, DocumentToolResult } from './document';
+import { DocumentToolResult } from './document';
 import { PencilEditIcon, SparklesIcon } from './icons';
-import { Markdown } from './markdown';
 import { MessageActions } from './message-actions';
 import { PreviewAttachment } from './preview-attachment';
 import { Weather } from './weather';
@@ -20,6 +18,7 @@ import { DocumentPreview } from './document-preview';
 import { MessageReasoning } from './message-reasoning';
 import type { UseChatHelpers } from '@ai-sdk/react';
 import { McpToolCard } from './mcp-tool-card';
+import type { ChatMessage } from '@/lib/types';
 
 const PurePreviewMessage = ({
   chatId,
@@ -27,18 +26,20 @@ const PurePreviewMessage = ({
   vote,
   isLoading,
   setMessages,
-  reload,
+  regenerate,
   isReadonly,
   requiresScrollPadding,
+  isArtifactVisible,
 }: {
   chatId: string;
-  message: UIMessage;
+  message: ChatMessage;
   vote: Vote | undefined;
   isLoading: boolean;
-  setMessages: UseChatHelpers['setMessages'];
-  reload: UseChatHelpers['reload'];
+  setMessages: UseChatHelpers<ChatMessage>['setMessages'];
+  regenerate: UseChatHelpers<ChatMessage>['regenerate'];
   isReadonly: boolean;
   requiresScrollPadding: boolean;
+  isArtifactVisible: boolean;
 }) => {
   const [mode, setMode] = useState<'view' | 'edit'>('view');
 
@@ -93,12 +94,12 @@ const PurePreviewMessage = ({
               const { type } = part;
               const key = `message-${message.id}-part-${index}`;
 
-              if (type === 'reasoning') {
+              if (type === 'reasoning' && part.text?.trim().length > 0) {
                 return (
                   <MessageReasoning
                     key={key}
                     isLoading={isLoading}
-                    reasoning={part.reasoningText}
+                    reasoning={part.text}
                   />
                 );
               }
@@ -125,124 +126,166 @@ const PurePreviewMessage = ({
                         </Tooltip>
                       )}
 
-                      <div
+                      <MessageContent
+                        hello={world}
                         data-testid="message-content"
-                        className={cn('flex flex-col gap-4', {
-                          'bg-primary text-primary-foreground px-3 py-2 rounded-xl':
+                        className={cn('justify-start items-start text-left', {
+                          'bg-primary text-primary-foreground':
                             message.role === 'user',
+                          'bg-transparent -ml-4': message.role === 'assistant',
                         })}
                       >
-                        <Markdown>{sanitizeText(part.text)}</Markdown>
-                      </div>
+                        <Response>{sanitizeText(part.text)}</Response>
+                      </MessageContent>
                     </div>
                   );
                 }
 
                 if (mode === 'edit') {
                   return (
-                    <div key={key} className="flex flex-row gap-2 items-start">
+                    <div
+                      key={key}
+                      className="flex flex-row gap-3 items-start w-full"
+                    >
                       <div className="size-8" />
-
-                      <MessageEditor
-                        key={message.id}
-                        message={message}
-                        setMode={setMode}
-                        setMessages={setMessages}
-                        reload={reload}
-                      />
+                      <div className="flex-1 min-w-0">
+                        <MessageEditor
+                          key={message.id}
+                          message={message}
+                          setMode={setMode}
+                          setMessages={setMessages}
+                          regenerate={regenerate}
+                        />
+                      </div>
                     </div>
                   );
                 }
               }
 
-              if (type === 'tool-invocation') {
-                const { toolInvocation } = part;
-                const { toolName, toolCallId, state } = toolInvocation;
+              if (type === 'tool-getWeather') {
+                const { toolCallId, state } = part;
 
-                // Check if this is an MCP tool (contains double underscore)
-                const isMcpTool = toolName.includes('__');
-                
-                if (state === 'call') {
-                  const { args } = toolInvocation;
+                return (
+                  <Tool key={toolCallId} defaultOpen={true}>
+                    <ToolHeader type="tool-getWeather" state={state} />
+                    <ToolContent>
+                      {state === 'input-available' && (
+                        <ToolInput input={part.input} />
+                      )}
+                      {state === 'output-available' && (
+                        <ToolOutput
+                          output={<Weather weatherAtLocation={part.output} />}
+                          errorText={undefined}
+                        />
+                      )}
+                    </ToolContent>
+                  </Tool>
+                );
+              }
 
+              if (type === 'tool-createDocument') {
+                const { toolCallId } = part;
+
+                if (part.output && 'error' in part.output) {
                   return (
                     <div
                       key={toolCallId}
-                      className={cx({
-                        skeleton: ['getWeather'].includes(toolName),
-                      })}
+                      className="p-4 text-red-500 bg-red-50 rounded-lg border border-red-200 dark:bg-red-950/50"
                     >
-                      {isMcpTool ? (
-                        <McpToolCard
-                          serverName={toolName.split('__')[0]}
-                          toolName={toolName}
-                          state="call"
-                          args={args}
-                          isReadonly={isReadonly}
-                        />
-                      ) : toolName === 'getWeather' ? (
-                        <Weather />
-                      ) : toolName === 'createDocument' ? (
-                        <DocumentPreview isReadonly={isReadonly} args={args} />
-                      ) : toolName === 'updateDocument' ? (
-                        <DocumentToolCall
-                          type="update"
-                          args={args}
-                          isReadonly={isReadonly}
-                        />
-                      ) : toolName === 'requestSuggestions' ? (
-                        <DocumentToolCall
-                          type="request-suggestions"
-                          args={args}
-                          isReadonly={isReadonly}
-                        />
-                      ) : null}
+                      Error creating document: {String(part.output.error)}
                     </div>
                   );
                 }
 
-                if (state === 'result') {
-                  const { result} = toolInvocation;
+                return (
+                  <DocumentPreview
+                    key={toolCallId}
+                    isReadonly={isReadonly}
+                    result={part.output}
+                  />
+                );
+              }
 
+              if (type === 'tool-updateDocument') {
+                const { toolCallId } = part;
+
+                if (part.output && 'error' in part.output) {
                   return (
-                    <div key={toolCallId}>
-                      {isMcpTool ? (
-                        <McpToolCard
-                          serverName={toolName.split('__')[0]}
-                          toolName={toolName}
-                          state="result"
-                          result={"The tool was executed successfully! Check the result below."}
-                          isReadonly={isReadonly}
-                        />
-                      ) : toolName === 'getWeather' ? (
-                        <Weather weatherAtLocation={result} />
-                      ) : toolName === 'createDocument' ? (
-                        <DocumentPreview
-                          isReadonly={isReadonly}
-                          result={result}
-                        />
-                      ) : toolName === 'updateDocument' ? (
-                        <DocumentToolResult
-                          type="update"
-                          result={result}
-                          isReadonly={isReadonly}
-                        />
-                      ) : toolName === 'requestSuggestions' ? (
-                        <DocumentToolResult
-                          type="request-suggestions"
-                          result={result}
-                          isReadonly={isReadonly}
-                        />
-                      ) : toolName === 'createMermaidDiagram' ? (
-                        <DocumentPreview
-                          isReadonly={isReadonly}
-                          result={result}
-                        />
-                      ) : (
-                        <pre>{JSON.stringify(result, null, 2)}</pre>
-                      )}
+                    <div
+                      key={toolCallId}
+                      className="p-4 text-red-500 bg-red-50 rounded-lg border border-red-200 dark:bg-red-950/50"
+                    >
+                      Error updating document: {String(part.output.error)}
                     </div>
                   );
+                }
+
+                return (
+                  <div key={toolCallId} className="relative">
+                    <DocumentPreview
+                      isReadonly={isReadonly}
+                      result={part.output}
+                      args={{ ...part.output, isUpdate: true }}
+                    />
+                  </div>
+                );
+              }
+
+              if (type === 'tool-requestSuggestions') {
+                const { toolCallId, state } = part;
+
+                return (
+                  <Tool key={toolCallId} defaultOpen={true}>
+                    <ToolHeader type="tool-requestSuggestions" state={state} />
+                    <ToolContent>
+                      {state === 'input-available' && (
+                        <ToolInput input={part.input} />
+                      )}
+                      {state === 'output-available' && (
+                        <ToolOutput
+                          output={
+                            'error' in part.output ? (
+                              <div className="p-2 text-red-500 rounded border">
+                                Error: {String(part.output.error)}
+                              </div>
+                            ) : (
+                              <DocumentToolResult
+                                type="request-suggestions"
+                                result={part.output}
+                                isReadonly={isReadonly}
+                              />
+                            )
+                          }
+                          errorText={undefined}
+                        />
+                      )}
+                    </ToolContent>
+                  </Tool>
+                );
+              }
+
+              // Is a MCP Tool
+              if (type.startsWith('tool-') && type.includes('__')) {
+                const { toolName, toolCallId, state } = part;
+
+                if (state === 'call') {
+                  <McpToolCard
+                    serverName={toolName.split('__')[0]}
+                    toolName={toolName}
+                    state="call"
+                    args={args}
+                    isReadonly={isReadonly}
+                  />;
+                } else if (state === 'result') {
+                  <McpToolCard
+                    serverName={toolName.split('__')[0]}
+                    toolName={toolName}
+                    state="result"
+                    result={
+                      'The tool was executed successfully! Check the result below.'
+                    }
+                    isReadonly={isReadonly}
+                  />;
                 }
               }
             })}

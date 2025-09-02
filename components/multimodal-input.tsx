@@ -1,6 +1,6 @@
 'use client';
 
-import type { Attachment, UIMessage } from 'ai';
+import type { UIMessage } from 'ai';
 import cx from 'classnames';
 import type React from 'react';
 import {
@@ -15,7 +15,6 @@ import {
 } from 'react';
 import { toast } from 'sonner';
 import { useLocalStorage, useWindowSize } from 'usehooks-ts';
-
 import { ArrowUpIcon, PaperclipIcon, StopIcon } from './icons';
 import { PreviewAttachment } from './preview-attachment';
 import { Button } from './ui/button';
@@ -28,6 +27,8 @@ import { ArrowDown, Server } from 'lucide-react';
 import { useScrollToBottom } from '@/hooks/use-scroll-to-bottom';
 import type { VisibilityType } from './visibility-selector';
 import MCPHubContent from './mcp-hub-content';
+import type { ChatMessage } from '@/lib/types';
+import type { LegacyAttachment } from '@/lib/db/firebase-types';
 
 function PureMultimodalInput({
   chatId,
@@ -39,22 +40,20 @@ function PureMultimodalInput({
   setAttachments,
   messages,
   setMessages,
-  append,
-  handleSubmit,
+  sendMessage,
   className,
   selectedVisibilityType,
 }: {
   chatId: string;
-  input: UseChatHelpers['input'];
-  setInput: UseChatHelpers['setInput'];
-  status: UseChatHelpers['status'];
+  sendMessage: UseChatHelpers<ChatMessage>['sendMessage'];
+  input: string;
+  setInput: Dispatch<SetStateAction<string>>;
+  status: UseChatHelpers<ChatMessage>['status'];
   stop: () => void;
-  attachments: Array<Attachment>;
-  setAttachments: Dispatch<SetStateAction<Array<Attachment>>>;
+  attachments: Array<LegacyAttachment>;
+  setAttachments: Dispatch<SetStateAction<Array<LegacyAttachment>>>;
   messages: Array<UIMessage>;
-  setMessages: UseChatHelpers['setMessages'];
-  append: UseChatHelpers['append'];
-  handleSubmit: UseChatHelpers['handleSubmit'];
+  setMessages: UseChatHelpers<ChatMessage>['setMessages'];
   className?: string;
   selectedVisibilityType: VisibilityType;
 }) {
@@ -114,25 +113,39 @@ function PureMultimodalInput({
   const submitForm = useCallback(() => {
     window.history.replaceState({}, '', `/chat/${chatId}`);
 
-    /* FIXME(@ai-sdk-upgrade-v5): The `experimental_attachments` property has been replaced with the parts array. Please manually migrate following https://ai-sdk.dev/docs/migration-guides/migration-guide-5-0#attachments--file-parts */
-    handleSubmit(undefined, {
-      experimental_attachments: attachments,
+    sendMessage({
+      role: 'user',
+      parts: [
+        ...attachments.map((attachment) => ({
+          type: 'file' as const,
+          url: attachment.url,
+          name: attachment.name,
+          mediaType: attachment.contentType,
+        })),
+        {
+          type: 'text',
+          text: input,
+        },
+      ],
     });
 
     setAttachments([]);
     setLocalStorageInput('');
     resetHeight();
+    setInput('');
 
     if (width && width > 768) {
       textareaRef.current?.focus();
     }
   }, [
     attachments,
-    handleSubmit,
+    chatId,
+    input,
+    sendMessage,
     setAttachments,
+    setInput,
     setLocalStorageInput,
     width,
-    chatId,
   ]);
 
   const uploadFile = async (file: File) => {
@@ -227,7 +240,7 @@ function PureMultimodalInput({
         attachments.length === 0 &&
         uploadQueue.length === 0 && (
           <SuggestedActions
-            append={append}
+            sendMessage={sendMessage}
             chatId={chatId}
             selectedVisibilityType={selectedVisibilityType}
           />
@@ -309,7 +322,7 @@ function PureMultimodalInput({
         >
           <Server className="size-4" />
         </Button>
-        
+
         <AnimatePresence>
           {isMCPHubOpen && (
             <>
@@ -322,13 +335,13 @@ function PureMultimodalInput({
                 className="fixed inset-0 z-50 bg-black/80"
                 onClick={() => setIsMCPHubOpen(false)}
               />
-              
+
               {/* Left sliding panel */}
               <motion.div
-                initial={{ x: "-100%" }}
+                initial={{ x: '-100%' }}
                 animate={{ x: 0 }}
-                exit={{ x: "-100%" }}
-                transition={{ type: "spring", stiffness: 300, damping: 30 }}
+                exit={{ x: '-100%' }}
+                transition={{ type: 'spring', stiffness: 300, damping: 30 }}
                 className="fixed inset-y-0 left-0 z-50 h-screen md:w-[400px] md:max-w-[90vw] sm:w-full sm:max-w-full bg-background border-r"
               >
                 <MCPHubContent setIsMCPHubOpen={setIsMCPHubOpen} />
@@ -340,14 +353,16 @@ function PureMultimodalInput({
 
       <div className="absolute bottom-0 right-0 p-2 w-fit flex flex-row justify-end gap-2 items-center">
         {input.length > 0 && (
-          <div className={cx(
-            "text-xs px-2 py-1 rounded-md transition-colors",
-            input.length > 100000 
-              ? "text-red-500 bg-red-50 dark:bg-red-900/20" 
-              : input.length > 90000 
-                ? "text-yellow-600 bg-yellow-50 dark:bg-yellow-900/20" 
-                : "text-muted-foreground bg-muted"
-          )}>
+          <div
+            className={cx(
+              'text-xs px-2 py-1 rounded-md transition-colors',
+              input.length > 100000
+                ? 'text-red-500 bg-red-50 dark:bg-red-900/20'
+                : input.length > 90000
+                  ? 'text-yellow-600 bg-yellow-50 dark:bg-yellow-900/20'
+                  : 'text-muted-foreground bg-muted',
+            )}
+          >
             {input.length.toLocaleString()}/100,000
           </div>
         )}
@@ -383,7 +398,7 @@ function PureAttachmentsButton({
   status,
 }: {
   fileInputRef: React.MutableRefObject<HTMLInputElement | null>;
-  status: UseChatHelpers['status'];
+  status: UseChatHelpers<ChatMessage>['status'];
 }) {
   return (
     <Button
@@ -408,7 +423,7 @@ function PureStopButton({
   setMessages,
 }: {
   stop: () => void;
-  setMessages: UseChatHelpers['setMessages'];
+  setMessages: UseChatHelpers<ChatMessage>['setMessages'];
 }) {
   return (
     <Button
@@ -444,7 +459,9 @@ function PureSendButton({
         event.preventDefault();
         submitForm();
       }}
-      disabled={input.length === 0 || input.length > 100000 || uploadQueue.length > 0}
+      disabled={
+        input.length === 0 || input.length > 100000 || uploadQueue.length > 0
+      }
     >
       <ArrowUpIcon size={14} />
     </Button>
