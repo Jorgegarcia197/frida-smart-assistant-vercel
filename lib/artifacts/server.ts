@@ -1,13 +1,13 @@
 import { codeDocumentHandler } from '@/artifacts/code/server';
-import { imageDocumentHandler } from '@/artifacts/image/server';
 import { sheetDocumentHandler } from '@/artifacts/sheet/server';
 import { textDocumentHandler } from '@/artifacts/text/server';
-import { mermaidDocumentHandler } from '@/artifacts/mermaid/server';
-import { ArtifactKind } from '@/components/artifact';
-import { DataStreamWriter } from 'ai';
-import { Document } from '@/lib/db/firebase-types';
+import type { ArtifactKind } from '@/components/artifact';
+import type { Document } from '../db/firebase-types';
 import { saveDocument } from '../db/queries';
-import { Session } from 'next-auth';
+import type { Session } from 'next-auth';
+import type { UIMessageStreamWriter } from 'ai';
+import type { ChatMessage } from '../types';
+import { mermaidDocumentHandler } from '@/artifacts/mermaid/server';
 
 export interface SaveDocumentProps {
   id: string;
@@ -20,14 +20,14 @@ export interface SaveDocumentProps {
 export interface CreateDocumentCallbackProps {
   id: string;
   title: string;
-  dataStream: DataStreamWriter;
+  dataStream: UIMessageStreamWriter<ChatMessage>;
   session: Session;
 }
 
 export interface UpdateDocumentCallbackProps {
   document: Document;
   description: string;
-  dataStream: DataStreamWriter;
+  dataStream: UIMessageStreamWriter<ChatMessage>;
   session: Session;
 }
 
@@ -93,9 +93,8 @@ export function createDocumentHandler<T extends ArtifactKind>(config: {
 export const documentHandlersByArtifactKind: Array<DocumentHandler> = [
   textDocumentHandler,
   codeDocumentHandler,
-  imageDocumentHandler,
   sheetDocumentHandler,
   mermaidDocumentHandler,
 ];
 
-export const artifactKinds = ['text', 'code', 'image', 'sheet', 'mermaid'] as const;
+export const artifactKinds = ['text', 'code', 'sheet', 'mermaid'] as const;

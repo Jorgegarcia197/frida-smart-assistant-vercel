@@ -1,4 +1,4 @@
-import { z } from 'zod/v3';
+import { z } from 'zod';
 import { streamObject } from 'ai';
 import { myProvider } from '@/lib/ai/providers';
 import { codePrompt, updateDocumentPrompt } from '@/lib/ai/prompts';
@@ -27,12 +27,9 @@ export const codeDocumentHandler = createDocumentHandler<'code'>({
 
         if (code) {
           dataStream.write({
-            'type': 'data',
-
-            'value': [{
-              type: 'code-delta',
-              content: code ?? '',
-            }]
+            type: 'data-codeDelta',
+            data: code ?? '',
+            transient: true,
           });
 
           draftContent = code;
@@ -47,7 +44,7 @@ export const codeDocumentHandler = createDocumentHandler<'code'>({
 
     const { fullStream } = streamObject({
       model: myProvider.languageModel('artifact-model'),
-      system: updateDocumentPrompt(document.content ?? '', 'code'),
+      system: updateDocumentPrompt(document.content, 'code'),
       prompt: description,
       schema: z.object({
         code: z.string(),
@@ -63,12 +60,9 @@ export const codeDocumentHandler = createDocumentHandler<'code'>({
 
         if (code) {
           dataStream.write({
-            'type': 'data',
-
-            'value': [{
-              type: 'code-delta',
-              content: code ?? '',
-            }]
+            type: 'data-codeDelta',
+            data: code ?? '',
+            transient: true,
           });
 
           draftContent = code;

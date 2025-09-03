@@ -50,7 +50,7 @@ export interface Document {
   id: string;
   createdAt: Date;
   title: string;
-  content?: string;
+  content: string | null;
   kind: ArtifactKind;
   userId: string;
 }
@@ -62,7 +62,7 @@ export interface Suggestion {
   documentCreatedAt: Date;
   originalText: string;
   suggestedText: string;
-  description?: string;
+  description: string | null;
   isResolved: boolean;
   userId: string;
   createdAt: Date;

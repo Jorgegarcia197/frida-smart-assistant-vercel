@@ -2,7 +2,7 @@ import { myProvider } from '@/lib/ai/providers';
 import { sheetPrompt, updateDocumentPrompt } from '@/lib/ai/prompts';
 import { createDocumentHandler } from '@/lib/artifacts/server';
 import { streamObject } from 'ai';
-import { z } from 'zod/v3';
+import { z } from 'zod';
 
 export const sheetDocumentHandler = createDocumentHandler<'sheet'>({
   kind: 'sheet',
@@ -27,12 +27,9 @@ export const sheetDocumentHandler = createDocumentHandler<'sheet'>({
 
         if (csv) {
           dataStream.write({
-            'type': 'data',
-
-            'value': [{
-              type: 'sheet-delta',
-              content: csv,
-            }]
+            type: 'data-sheetDelta',
+            data: csv,
+            transient: true,
           });
 
           draftContent = csv;
@@ -41,12 +38,9 @@ export const sheetDocumentHandler = createDocumentHandler<'sheet'>({
     }
 
     dataStream.write({
-      'type': 'data',
-
-      'value': [{
-        type: 'sheet-delta',
-        content: draftContent,
-      }]
+      type: 'data-sheetDelta',
+      data: draftContent,
+      transient: true,
     });
 
     return draftContent;
@@ -56,7 +50,7 @@ export const sheetDocumentHandler = createDocumentHandler<'sheet'>({
 
     const { fullStream } = streamObject({
       model: myProvider.languageModel('artifact-model'),
-      system: updateDocumentPrompt(document.content ?? '', 'sheet'),
+      system: updateDocumentPrompt(document.content, 'sheet'),
       prompt: description,
       schema: z.object({
         csv: z.string(),
@@ -72,12 +66,9 @@ export const sheetDocumentHandler = createDocumentHandler<'sheet'>({
 
         if (csv) {
           dataStream.write({
-            'type': 'data',
-
-            'value': [{
-              type: 'sheet-delta',
-              content: csv,
-            }]
+            type: 'data-sheetDelta',
+            data: csv,
+            transient: true,
           });
 
           draftContent = csv;

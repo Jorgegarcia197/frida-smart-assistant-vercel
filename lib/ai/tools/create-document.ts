@@ -1,15 +1,16 @@
 import { generateUUID } from '@/lib/utils';
-import { DataStreamWriter, tool } from 'ai';
-import { z } from 'zod/v3';
-import { Session } from 'next-auth';
+import { tool, type UIMessageStreamWriter } from 'ai';
+import { z } from 'zod';
+import type { Session } from 'next-auth';
 import {
   artifactKinds,
   documentHandlersByArtifactKind,
 } from '@/lib/artifacts/server';
+import type { ChatMessage } from '@/lib/types';
 
 interface CreateDocumentProps {
   session: Session;
-  dataStream: DataStreamWriter;
+  dataStream: UIMessageStreamWriter<ChatMessage>;
 }
 
 export const createDocument = ({ session, dataStream }: CreateDocumentProps) =>
@@ -24,39 +25,27 @@ export const createDocument = ({ session, dataStream }: CreateDocumentProps) =>
       const id = generateUUID();
 
       dataStream.write({
-        'type': 'data',
-
-        'value': [{
-          type: 'kind',
-          content: kind,
-        }]
+        type: 'data-kind',
+        data: kind,
+        transient: true,
       });
 
       dataStream.write({
-        'type': 'data',
-
-        'value': [{
-          type: 'id',
-          content: id,
-        }]
+        type: 'data-id',
+        data: id,
+        transient: true,
       });
 
       dataStream.write({
-        'type': 'data',
-
-        'value': [{
-          type: 'title',
-          content: title,
-        }]
+        type: 'data-title',
+        data: title,
+        transient: true,
       });
 
       dataStream.write({
-        'type': 'data',
-
-        'value': [{
-          type: 'clear',
-          content: '',
-        }]
+        type: 'data-clear',
+        data: null,
+        transient: true,
       });
 
       const documentHandler = documentHandlersByArtifactKind.find(
@@ -75,10 +64,7 @@ export const createDocument = ({ session, dataStream }: CreateDocumentProps) =>
         session,
       });
 
-      dataStream.write({
-        'type': 'data',
-        'value': [{ type: 'finish', content: '' }]
-      });
+      dataStream.write({ type: 'data-finish', data: null, transient: true });
 
       return {
         id,

@@ -1,12 +1,13 @@
-import { DataStreamWriter, tool } from 'ai';
-import { Session } from 'next-auth';
-import { z } from 'zod/v3';
-import { getDocumentById, saveDocument } from '@/lib/db/queries';
+import { tool, type UIMessageStreamWriter } from 'ai';
+import type { Session } from 'next-auth';
+import { z } from 'zod';
+import { getDocumentById } from '@/lib/db/queries';
 import { documentHandlersByArtifactKind } from '@/lib/artifacts/server';
+import type { ChatMessage } from '@/lib/types';
 
 interface UpdateDocumentProps {
   session: Session;
-  dataStream: DataStreamWriter;
+  dataStream: UIMessageStreamWriter<ChatMessage>;
 }
 
 export const updateDocument = ({ session, dataStream }: UpdateDocumentProps) =>
@@ -28,12 +29,9 @@ export const updateDocument = ({ session, dataStream }: UpdateDocumentProps) =>
       }
 
       dataStream.write({
-        'type': 'data',
-
-        'value': [{
-          type: 'clear',
-          content: document.title,
-        }]
+        type: 'data-clear',
+        data: null,
+        transient: true,
       });
 
       const documentHandler = documentHandlersByArtifactKind.find(
@@ -52,10 +50,7 @@ export const updateDocument = ({ session, dataStream }: UpdateDocumentProps) =>
         session,
       });
 
-      dataStream.write({
-        'type': 'data',
-        'value': [{ type: 'finish', content: '' }]
-      });
+      dataStream.write({ type: 'data-finish', data: null, transient: true });
 
       return {
         id,
