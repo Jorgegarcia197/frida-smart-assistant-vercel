@@ -76,21 +76,23 @@ function jsonSchemaToZodObject(jsonSchema: any): z.ZodObject<any> {
 
   if (properties && typeof properties === 'object') {
     const zodFields: Record<string, z.ZodTypeAny> = {};
-    
+
     for (const [key, value] of Object.entries(properties)) {
       let fieldSchema = jsonSchemaPropertyToZod(value as any);
-      
+
       // Handle optional fields
       if (!required.includes(key)) {
         fieldSchema = fieldSchema.optional();
       }
-      
+
       zodFields[key] = fieldSchema;
     }
-    
-    return Object.keys(zodFields).length > 0 ? z.object(zodFields) : z.object({});
+
+    return Object.keys(zodFields).length > 0
+      ? z.object(zodFields)
+      : z.object({});
   }
-  
+
   return z.object({});
 }
 
@@ -131,7 +133,7 @@ async function getMcpToolsForAI(userId: string) {
   try {
     console.log('🔧 Getting MCP client instance for user:', userId);
     const mcpClient = getMcpClientInstance(userId);
-    
+
     if (!mcpClient || mcpClient.isConnecting) {
       console.log('⏳ MCP client not ready or still connecting');
       return { mcpTools, mcpActiveTools };
@@ -153,13 +155,28 @@ async function getMcpToolsForAI(userId: string) {
 
     // Get all connected and enabled servers
     const servers = mcpClient.getServers();
-    console.log('🔧 All MCP servers:', servers.map(s => ({ name: s.name, status: s.status, disabled: s.disabled, hasTools: !!s.tools })));
-    
-    const enabledServers = servers.filter(
-      server => !server.disabled && server.status === 'connected' && server.tools && server.tools.length > 0
+    console.log(
+      '🔧 All MCP servers:',
+      servers.map((s) => ({
+        name: s.name,
+        status: s.status,
+        disabled: s.disabled,
+        hasTools: !!s.tools,
+      })),
     );
 
-    console.log('🔧 Available MCP servers:', enabledServers.map(s => s.name));
+    const enabledServers = servers.filter(
+      (server) =>
+        !server.disabled &&
+        server.status === 'connected' &&
+        server.tools &&
+        server.tools.length > 0,
+    );
+
+    console.log(
+      '🔧 Available MCP servers:',
+      enabledServers.map((s) => s.name),
+    );
 
     for (const server of enabledServers) {
       if (!server.tools) continue;
@@ -167,42 +184,53 @@ async function getMcpToolsForAI(userId: string) {
       for (const mcpTool of server.tools) {
         // Create a unique tool name with server prefix
         const toolName = `${server.name}__${mcpTool.name}`;
-        
+
         // Convert JSON Schema to Zod schema for parameters
         let parametersSchema: z.ZodTypeAny = z.object({});
-        
+
         if (mcpTool.inputSchema) {
           try {
             parametersSchema = jsonSchemaToZodObject(mcpTool.inputSchema);
           } catch (error) {
-            console.warn(`Failed to convert JSON schema to Zod for tool ${toolName}:`, error);
+            console.warn(
+              `Failed to convert JSON schema to Zod for tool ${toolName}:`,
+              error,
+            );
             parametersSchema = z.object({});
           }
         }
 
         mcpTools[toolName] = tool({
-          description: mcpTool.description || `MCP tool: ${mcpTool.name} from ${server.name}`,
+          description:
+            mcpTool.description ||
+            `MCP tool: ${mcpTool.name} from ${server.name}`,
           inputSchema: parametersSchema,
           execute: async (args: any) => {
             console.log(`🛠️ Executing MCP tool: ${toolName} with args:`, args);
             try {
-              const result = await mcpClient.callTool(server.name, mcpTool.name, args);
+              const result = await mcpClient.callTool(
+                server.name,
+                mcpTool.name,
+                args,
+              );
               console.log(`✅ MCP tool result for ${toolName}:`, result);
               return result;
             } catch (error) {
-              console.error(`❌ MCP tool execution failed for ${toolName}:`, error);
+              console.error(
+                `❌ MCP tool execution failed for ${toolName}:`,
+                error,
+              );
               throw error;
             }
-          }
+          },
         });
-        
+
         mcpActiveTools.push(toolName);
       }
     }
 
     console.log('🔧 MCP tools ready:', mcpActiveTools);
     return { mcpTools, mcpActiveTools };
-
   } catch (error) {
     console.error('❌ Failed to initialize MCP tools:', error);
     return { mcpTools, mcpActiveTools };
@@ -220,28 +248,40 @@ export async function POST(request: Request) {
       hasMessage: !!json.message,
       messageType: json.message?.role,
       selectedChatModel: json.selectedChatModel,
-      selectedVisibilityType: json.selectedVisibilityType
+      selectedVisibilityType: json.selectedVisibilityType,
     });
     requestBody = postRequestBodySchema.parse(json);
     console.log('✅ Request body validation passed');
   } catch (error) {
     console.error('❌ Request parsing/validation failed:', error);
-    
+
     // Check if it's a character limit error
     if (error instanceof Error && error.message.includes('too_big')) {
-      return new ChatSDKError('bad_request:api', 'Your message is too long. Please keep it under 100,000 characters.').toResponse();
+      return new ChatSDKError(
+        'bad_request:api',
+        'Your message is too long. Please keep it under 100,000 characters.',
+      ).toResponse();
     }
-    
+
     return new ChatSDKError('bad_request:api').toResponse();
   }
 
   try {
     const { id, message, selectedChatModel, selectedVisibilityType } =
       requestBody;
-    console.log('📋 Extracted request data:', { id, messageRole: message.role, selectedChatModel, selectedVisibilityType });
+    console.log('📋 Extracted request data:', {
+      id,
+      messageRole: message.role,
+      selectedChatModel,
+      selectedVisibilityType,
+    });
 
     const session = await auth();
-    console.log('🔐 Session check:', { hasSession: !!session, hasUser: !!session?.user, userId: session?.user?.id });
+    console.log('🔐 Session check:', {
+      hasSession: !!session,
+      hasUser: !!session?.user,
+      userId: session?.user?.id,
+    });
 
     if (!session?.user) {
       console.error('❌ No session or user found');
@@ -253,7 +293,7 @@ export async function POST(request: Request) {
 
     const chat = await getChatById({ id });
     console.log('💬 Chat lookup:', { chatExists: !!chat, chatId: id });
-    
+
     if (!chat) {
       console.log('📝 Creating new chat');
       const title = await generateTitleFromUserMessage({
@@ -312,14 +352,16 @@ export async function POST(request: Request) {
 
     // Check if user has sent a PDF
     /* FIXME(@ai-sdk-upgrade-v5): The `experimental_attachments` property has been replaced with the parts array. Please manually migrate following https://ai-sdk.dev/docs/migration-guides/migration-guide-5-0#attachments--file-parts */
-    const messagesHavePDF = messages.some(message =>
+    const messagesHavePDF = messages.some((message) =>
       message.experimental_attachments?.some(
-        a => a.contentType === 'application/pdf',
+        (a) => a.contentType === 'application/pdf',
       ),
     );
 
     // Get MCP tools for this user
-    const { mcpTools, mcpActiveTools } = await getMcpToolsForAI(session.user.id);
+    const { mcpTools, mcpActiveTools } = await getMcpToolsForAI(
+      session.user.id,
+    );
 
     console.log('🌊 Creating data stream with streamId:', streamId);
     const stream = createDataStream({
@@ -327,13 +369,13 @@ export async function POST(request: Request) {
         // Combine built-in tools with MCP tools
         const builtInActiveTools = [
           'getWeather',
-          'createDocument', 
+          'createDocument',
           'updateDocument',
           'requestSuggestions',
-          'createMermaidDiagram'
+          'createMermaidDiagram',
         ];
         const allActiveTools = [...builtInActiveTools, ...mcpActiveTools];
-        
+
         console.log('🔄 Executing stream with tools:', allActiveTools);
         const result = streamText({
           model: myProvider.languageModel(selectedChatModel),
@@ -345,7 +387,7 @@ export async function POST(request: Request) {
           experimental_activeTools:
             selectedChatModel === 'chat-model-reasoning'
               ? []
-              : allActiveTools as any,
+              : (allActiveTools as any),
 
           experimental_transform: smoothStream({ chunking: 'word' }),
           experimental_generateMessageId: generateUUID,
@@ -404,7 +446,7 @@ export async function POST(request: Request) {
           experimental_telemetry: {
             isEnabled: isProductionEnvironment,
             functionId: 'stream-text',
-          }
+          },
         });
 
         result.consumeStream();
@@ -434,7 +476,10 @@ export async function POST(request: Request) {
       return error.toResponse();
     }
     console.error('❌ Unexpected error in chat route:', error);
-    return new ChatSDKError('bad_request:chat', 'An unexpected error occurred').toResponse();
+    return new ChatSDKError(
+      'bad_request:chat',
+      'An unexpected error occurred',
+    ).toResponse();
   }
 }
 
@@ -521,12 +566,14 @@ export async function GET(request: Request) {
     const restoredStream = createDataStream({
       execute: (buffer) => {
         buffer.write({
-          'type': 'data',
+          type: 'data',
 
-          'value': [{
-            type: 'append-message',
-            message: JSON.stringify(mostRecentMessage),
-          }]
+          value: [
+            {
+              type: 'append-message',
+              message: JSON.stringify(mostRecentMessage),
+            },
+          ],
         });
       },
     });
