@@ -39,16 +39,13 @@ Return only the Mermaid diagram syntax, starting with the diagram type.`,
 
       if (type === 'text-delta') {
         const { text: textDelta } = delta;
-        
-        draftContent += textDelta;
-        
-        dataStream.write({
-          'type': 'data',
 
-          'value': [{
-            type: 'mermaid-delta',
-            content: draftContent,
-          }]
+        draftContent += textDelta;
+
+        dataStream.write({
+          type: 'data-mermaid-delta',
+          data: draftContent,
+          transient: true,
         });
       }
     }
@@ -83,20 +80,17 @@ Return the complete updated Mermaid diagram syntax.`,
 
       if (type === 'text-delta') {
         const { text: textDelta } = delta;
-        
-        draftContent += textDelta;
-        
-        dataStream.write({
-          'type': 'data',
 
-          'value': [{
-            type: 'mermaid-delta',
-            content: draftContent,
-          }]
+        draftContent += textDelta;
+
+        dataStream.write({
+          type: 'data-mermaid-delta',
+          data: draftContent,
+          transient: true,
         });
       }
     }
 
     return draftContent;
   },
-}); 
+});

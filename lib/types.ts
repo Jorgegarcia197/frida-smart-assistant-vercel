@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import type { getWeather } from './ai/tools/get-weather';
+import type { createMermaidDiagram } from './ai/tools/create-mermaid-diagram';
 import type { createDocument } from './ai/tools/create-document';
 import type { updateDocument } from './ai/tools/update-document';
 import type { requestSuggestions } from './ai/tools/request-suggestions';
@@ -48,15 +49,22 @@ type updateDocumentTool = InferUITool<ReturnType<typeof updateDocument>>;
 type requestSuggestionsTool = InferUITool<
   ReturnType<typeof requestSuggestions>
 >;
+type createMermaidDiagramTool = InferUITool<
+  ReturnType<typeof createMermaidDiagram>
+>;
 
 export type ChatTools = {
   getWeather: weatherTool;
   createDocument: createDocumentTool;
   updateDocument: updateDocumentTool;
   requestSuggestions: requestSuggestionsTool;
+  createMermaidDiagram: createMermaidDiagramTool;
 };
 
 export type CustomUIDataTypes = {
+  'mermaid-delta': string;
+  'mermaid-type': string;
+  'mermaid-description': string;
   textDelta: string;
   imageDelta: string;
   sheetDelta: string;

@@ -220,6 +220,30 @@ const PurePreviewMessage = ({
                   />
                 );
               }
+
+              if (type === 'tool-createMermaidDiagram') {
+                const { toolCallId, output } = part;
+
+                if (output && 'error' in output) {
+                  return (
+                    <div
+                      key={toolCallId}
+                      className="p-4 text-red-500 bg-red-50 rounded-lg border border-red-200 dark:bg-red-950/50"
+                    >
+                      Error creating diagram: {String(output.error)}
+                    </div>
+                  );
+                }
+
+                return (
+                  <DocumentPreview
+                    key={toolCallId}
+                    isReadonly={isReadonly}
+                    result={output}
+                  />
+                );
+              }
+
               if (type === 'tool-updateDocument') {
                 const { toolCallId } = part;
 
