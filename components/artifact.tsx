@@ -1,4 +1,3 @@
-import type { Attachment, UIMessage } from 'ai';
 import { formatDistance } from 'date-fns';
 import { AnimatePresence, motion } from 'framer-motion';
 import {
@@ -29,7 +28,7 @@ import { mermaidArtifact } from '@/artifacts/mermaid/client';
 import equal from 'fast-deep-equal';
 import type { UseChatHelpers } from '@ai-sdk/react';
 import type { VisibilityType } from './visibility-selector';
-import { ChatMessage } from '@/lib/types';
+import type { Attachment, ChatMessage } from '@/lib/types';
 
 export const artifactDefinitions = [
   textArtifact,
@@ -59,7 +58,6 @@ function PureArtifact({
   chatId,
   input,
   setInput,
-  handleSubmit,
   status,
   stop,
   attachments,
@@ -67,26 +65,27 @@ function PureArtifact({
   sendMessage,
   messages,
   setMessages,
-  reload,
+  regenerate,
   votes,
   isReadonly,
   selectedVisibilityType,
+  selectedModelId,
 }: {
   chatId: string;
   input: string;
   setInput: Dispatch<SetStateAction<string>>;
   status: UseChatHelpers<ChatMessage>['status'];
   stop: UseChatHelpers<ChatMessage>['stop'];
-  attachments: Array<Attachment>;
-  setAttachments: Dispatch<SetStateAction<Array<Attachment>>>;
-  messages: Array<UIMessage>;
+  attachments: Attachment[];
+  setAttachments: Dispatch<SetStateAction<Attachment[]>>;
+  messages: ChatMessage[];
   setMessages: UseChatHelpers<ChatMessage>['setMessages'];
   votes: Array<Vote> | undefined;
   sendMessage: UseChatHelpers<ChatMessage>['sendMessage'];
-  handleSubmit: UseChatHelpers<ChatMessage>['handleSubmit'];
-  reload: UseChatHelpers<ChatMessage>['reload'];
+  regenerate: UseChatHelpers<ChatMessage>['regenerate'];
   isReadonly: boolean;
   selectedVisibilityType: VisibilityType;
+  selectedModelId: string;
 }) {
   const { artifact, setArtifact, metadata, setMetadata } = useArtifact();
 
@@ -322,7 +321,7 @@ function PureArtifact({
                   votes={votes}
                   messages={messages}
                   setMessages={setMessages}
-                  reload={reload}
+                  regenerate={regenerate}
                   isReadonly={isReadonly}
                   artifactStatus={artifact.status}
                 />
@@ -341,6 +340,7 @@ function PureArtifact({
                     className="bg-background dark:bg-muted"
                     setMessages={setMessages}
                     selectedVisibilityType={selectedVisibilityType}
+                    selectedModelId={selectedModelId}
                   />
                 </form>
               </div>

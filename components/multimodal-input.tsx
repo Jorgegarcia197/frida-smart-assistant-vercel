@@ -43,6 +43,7 @@ function PureMultimodalInput({
   sendMessage,
   className,
   selectedVisibilityType,
+  selectedModelId,
 }: {
   chatId: string;
   sendMessage: UseChatHelpers<ChatMessage>['sendMessage'];
@@ -56,6 +57,7 @@ function PureMultimodalInput({
   setMessages: UseChatHelpers<ChatMessage>['setMessages'];
   className?: string;
   selectedVisibilityType: VisibilityType;
+  selectedModelId: string;
 }) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const { width } = useWindowSize();
