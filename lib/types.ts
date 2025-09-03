@@ -25,6 +25,15 @@ export type Vote = {
   isUpvoted: boolean; // not null
 };
 
+export type Document = {
+  id: string; // uuid
+  createdAt: Date; // timestamp
+  title: string; // not null
+  content: string | null; // nullable
+  kind: 'text' | 'code' | 'image' | 'sheet'; // not null, default 'text'
+  userId: string; // uuid
+};
+
 export type DataPart = { type: 'append-message'; message: string };
 
 export const messageMetadataSchema = z.object({
