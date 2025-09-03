@@ -3,7 +3,7 @@ import { type ClassValue, clsx } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 import type { Document } from '@/lib/db/firebase-types';
 import { ChatSDKError, type ErrorCode } from './errors';
-import { ChatMessage } from './types';
+import type { ChatMessage } from './types';
 
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
