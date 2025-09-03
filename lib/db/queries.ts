@@ -16,7 +16,7 @@ import type {
 } from './firebase-types';
 import type { ArtifactKind } from '@/components/artifact';
 import { generateUUID } from '../utils';
-import { generateHashedPassword } from './utils';
+import { generateHashedPassword, stripUndefinedDeep } from './utils';
 import type { VisibilityType } from '@/components/visibility-selector';
 import { ChatSDKError } from '../errors';
 
@@ -469,10 +469,10 @@ export async function saveMessages({
         .doc(message.chatId)
         .collection('messages')
         .doc(message.id);
-      batch.set(messageRef, {
-        ...message,
-        createdAt: dateToTimestamp(message.createdAt),
-      });
+
+      const sanitizedMessage = stripUndefinedDeep(message);
+
+      batch.set(messageRef, sanitizedMessage);
     });
 
     await batch.commit();
