@@ -6,7 +6,7 @@ import {
   convertToModelMessages,
   JsonToSseTransformStream,
 } from 'ai';
-import { auth, type UserType } from '@/app/(auth)/auth';
+import { auth } from '@/app/(auth)/auth';
 import { type RequestHints, systemPrompt } from '@/lib/ai/prompts';
 import {
   createStreamId,
@@ -242,15 +242,7 @@ export async function POST(request: Request) {
 
   try {
     const json = await request.json();
-    console.log('📝 Request JSON parsed:', {
-      hasId: !!json.id,
-      hasMessage: !!json.message,
-      messageType: json.message?.role,
-      selectedChatModel: json.selectedChatModel,
-      selectedVisibilityType: json.selectedVisibilityType,
-    });
     requestBody = postRequestBodySchema.parse(json);
-    console.log('✅ Request body validation passed');
   } catch (error) {
     console.error('❌ Request parsing/validation failed:', error);
 
@@ -268,30 +260,14 @@ export async function POST(request: Request) {
   try {
     const { id, message, selectedChatModel, selectedVisibilityType } =
       requestBody;
-    console.log('📋 Extracted request data:', {
-      id,
-      messageRole: message.role,
-      selectedChatModel,
-      selectedVisibilityType,
-    });
 
     const session = await auth();
-    console.log('🔐 Session check:', {
-      hasSession: !!session,
-      hasUser: !!session?.user,
-      userId: session?.user?.id,
-    });
-
     if (!session?.user) {
       console.error('❌ No session or user found');
       return new ChatSDKError('unauthorized:chat').toResponse();
     }
 
-    const userType: UserType = session.user.type;
-    console.log('👤 User type:', userType);
-
     const chat = await getChatById({ id });
-    console.log('💬 Chat lookup:', { chatExists: !!chat, chatId: id });
 
     if (!chat) {
       console.log('📝 Creating new chat');
@@ -347,7 +323,6 @@ export async function POST(request: Request) {
       session.user.id,
     );
 
-    console.log('🌊 Creating data stream with streamId:', streamId);
     const stream = createUIMessageStream({
       execute: ({ writer: dataStream }) => {
         const result = streamText({
