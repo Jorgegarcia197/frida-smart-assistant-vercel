@@ -28,6 +28,7 @@ import {
 } from './elements/tool';
 import { MessageContent } from './elements/message';
 import { Response } from './elements/response';
+import { useDataStream } from './data-stream-provider';
 
 const PurePreviewMessage = ({
   chatId,
@@ -56,11 +57,13 @@ const PurePreviewMessage = ({
     (part) => part.type === 'file',
   );
 
+  useDataStream();
+
   return (
     <AnimatePresence>
       <motion.div
         data-testid={`message-${message.role}`}
-        className="w-full mx-auto max-w-3xl px-4 group/message"
+        className="w-full group/message"
         initial={{ y: 5, opacity: 0 }}
         animate={{ y: 0, opacity: 1 }}
         data-role={message.role}
@@ -195,7 +198,6 @@ const PurePreviewMessage = ({
                   </Tool>
                 );
               }
-
               if (type === 'tool-createDocument') {
                 const { toolCallId } = part;
 
@@ -218,7 +220,6 @@ const PurePreviewMessage = ({
                   />
                 );
               }
-
               if (type === 'tool-updateDocument') {
                 const { toolCallId } = part;
 
