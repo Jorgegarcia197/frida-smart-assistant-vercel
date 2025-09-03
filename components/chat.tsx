@@ -1,6 +1,5 @@
 'use client';
 
-import type { Attachment, UIMessage } from 'ai';
 import { useChat } from '@ai-sdk/react';
 import { useEffect, useState } from 'react';
 import useSWR, { useSWRConfig } from 'swr';
@@ -20,7 +19,9 @@ import { useSearchParams } from 'next/navigation';
 import { useChatVisibility } from '@/hooks/use-chat-visibility';
 import { useAutoResume } from '@/hooks/use-auto-resume';
 import { ChatSDKError } from '@/lib/errors';
-import { ChatMessage } from '@/lib/types';
+import type { Attachment, ChatMessage } from '@/lib/types';
+import { useDataStream } from './data-stream-provider';
+import { DefaultChatTransport } from 'ai';
 
 export function Chat({
   id,
@@ -40,6 +41,7 @@ export function Chat({
   autoResume: boolean;
 }) {
   const { mutate } = useSWRConfig();
+  const { setDataStream } = useDataStream();
 
   const [input, setInput] = useState<string>('');
 
@@ -61,14 +63,25 @@ export function Chat({
     messages: initialMessages,
     experimental_throttle: 100,
     generateId: generateUUID,
-    fetch: fetchWithErrorHandlers,
-
-    experimental_prepareRequestBody: (body) => ({
-      id,
-      message: body.messages.at(-1),
-      selectedChatModel: initialChatModel,
-      selectedVisibilityType: visibilityType,
+    transport: new DefaultChatTransport({
+      api: '/api/chat',
+      fetch: fetchWithErrorHandlers,
+      prepareSendMessagesRequest({ messages, id, body }) {
+        return {
+          body: {
+            id,
+            message: messages.at(-1),
+            selectedChatModel: initialChatModel,
+            selectedVisibilityType: visibilityType,
+            ...body,
+          },
+        };
+      },
     }),
+
+    onData: (dataPart) => {
+      setDataStream((ds) => (ds ? [...ds, dataPart] : []));
+    },
 
     onFinish: () => {
       mutate(unstable_serialize(getChatHistoryPaginationKey));
@@ -99,7 +112,7 @@ export function Chat({
       setHasAppendedQuery(true);
       window.history.replaceState({}, '', `/chat/${id}`);
     }
-  }, [query, append, hasAppendedQuery, id]);
+  }, [query, sendMessage, hasAppendedQuery, id]);
 
   const { data: votes } = useSWR<Array<Vote>>(
     messages.length >= 2 ? `/api/vote?chatId=${id}` : null,
@@ -152,6 +165,7 @@ export function Chat({
               setMessages={setMessages}
               status={status}
               stop={stop}
+              selectedModelId={initialChatModel}
             />
           )}
         </form>
@@ -161,11 +175,10 @@ export function Chat({
         attachments={attachments}
         sendMessage={sendMessage}
         chatId={id}
-        handleSubmit={handleSubmit}
         input={input}
         isReadonly={isReadonly}
         messages={messages}
-        reload={reload}
+        regenerate={regenerate}
         selectedVisibilityType={visibilityType}
         setAttachments={setAttachments}
         setInput={setInput}
@@ -173,6 +186,7 @@ export function Chat({
         status={status}
         stop={stop}
         votes={votes}
+        selectedModelId={initialChatModel}
       />
     </>
   );
