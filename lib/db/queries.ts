@@ -13,7 +13,6 @@ import type {
   Vote,
   Document,
   Suggestion,
-  Stream,
 } from './firebase-types';
 import type { ArtifactKind } from '@/components/artifact';
 import { generateUUID } from '../utils';
@@ -441,10 +440,14 @@ export async function getChatById({ id }: { id: string }) {
     if (!doc.exists) {
       return null;
     }
+
+    const data = doc.data();
+    if (!data) return null;
+
     return {
       id: doc.id,
-      ...doc.data(),
-      createdAt: timestampToDate(doc.data()!.createdAt),
+      ...data,
+      createdAt: timestampToDate(data.createdAt),
     } as Chat;
   } catch (error) {
     throw new ChatSDKError('bad_request:database', 'Failed to get chat by id');
@@ -509,10 +512,13 @@ export async function getMessageById({ id }: { id: string }) {
     for (const chatDoc of chatsSnapshot.docs) {
       const messageDoc = await chatDoc.ref.collection('messages').doc(id).get();
       if (messageDoc.exists) {
+        const data = messageDoc.data();
+        if (!data) return null;
+
         return {
           id: messageDoc.id,
-          ...messageDoc.data(),
-          createdAt: timestampToDate(messageDoc.data()!.createdAt),
+          ...data,
+          createdAt: timestampToDate(data.createdAt),
         } as DBMessage;
       }
     }
@@ -622,13 +628,15 @@ export async function getDocumentsById({ id }: { id: string }) {
 export async function getDocumentById({ id }: { id: string }) {
   try {
     const doc = await db.collection('documents').doc(id).get();
-    if (!doc.exists) {
-      return null;
-    }
+    if (!doc.exists) return null;
+
+    const data = doc.data();
+    if (!data) return null;
+
     return {
       id: doc.id,
-      ...doc.data(),
-      createdAt: timestampToDate(doc.data()!.createdAt),
+      ...data,
+      createdAt: timestampToDate(data.createdAt),
     } as Document;
   } catch (error) {
     throw new ChatSDKError(
@@ -771,10 +779,14 @@ export async function updateChatVisiblityById({
     await db.collection('chats').doc(chatId).update({ visibility });
 
     const doc = await db.collection('chats').doc(chatId).get();
+
+    const data = doc.data();
+    if (!data) return null;
+
     return {
       id: doc.id,
-      ...doc.data(),
-      createdAt: timestampToDate(doc.data()!.createdAt),
+      ...data,
+      createdAt: timestampToDate(data.createdAt),
     } as Chat;
   } catch (error) {
     throw new ChatSDKError(
@@ -843,18 +855,16 @@ export async function createStreamId({
   }
 }
 
-export async function getStreamIdsByChatId({ chatId }: { chatId: string }) {
+export async function getStreamIdsByChatId({
+  chatId,
+}: { chatId: string }): Promise<string[]> {
   try {
     const snapshot = await db
       .collection('chats')
       .doc(chatId)
       .collection('streams')
       .get();
-    return snapshot.docs.map((doc) => ({
-      id: doc.id,
-      ...doc.data(),
-      createdAt: timestampToDate(doc.data().createdAt),
-    })) as Stream[];
+    return snapshot.docs.map((doc) => doc.id);
   } catch (error) {
     throw new ChatSDKError(
       'bad_request:database',

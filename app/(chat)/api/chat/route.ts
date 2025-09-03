@@ -1,10 +1,10 @@
 import {
-  appendClientMessage,
-  appendResponseMessages,
-  createDataStream,
   smoothStream,
   streamText,
   stepCountIs,
+  createUIMessageStream,
+  convertToModelMessages,
+  JsonToSseTransformStream,
 } from 'ai';
 import { auth, type UserType } from '@/app/(auth)/auth';
 import { type RequestHints, systemPrompt } from '@/lib/ai/prompts';
@@ -12,22 +12,19 @@ import {
   createStreamId,
   deleteChatById,
   getChatById,
-  getMessageCountByUserId,
   getMessagesByChatId,
   getStreamIdsByChatId,
   saveChat,
   saveMessages,
 } from '@/lib/db/queries';
-import { generateUUID, getTrailingMessageId } from '@/lib/utils';
+import { generateUUID } from '@/lib/utils';
 import { generateTitleFromUserMessage } from '../../actions';
 import { createDocument } from '@/lib/ai/tools/create-document';
 import { updateDocument } from '@/lib/ai/tools/update-document';
 import { requestSuggestions } from '@/lib/ai/tools/request-suggestions';
 import { getWeather } from '@/lib/ai/tools/get-weather';
 import { createMermaidDiagram } from '@/lib/ai/tools/create-mermaid-diagram';
-import { isProductionEnvironment } from '@/lib/constants';
 import { myProvider } from '@/lib/ai/providers';
-import { entitlementsByUserType } from '@/lib/ai/entitlements';
 import { getMcpClientInstance } from '@/lib/mcp/mcp-singleton-instance';
 import { tool } from 'ai';
 import { z } from 'zod/v3';
@@ -41,6 +38,8 @@ import { after } from 'next/server';
 import type { Chat } from '@/lib/db/firebase-types';
 import { differenceInSeconds } from 'date-fns';
 import { ChatSDKError } from '@/lib/errors';
+import { convertToUIMessages } from '../../utils';
+import type { ChatMessage } from '@/lib/types';
 
 export const maxDuration = 60;
 
@@ -315,14 +314,8 @@ export async function POST(request: Request) {
       }
     }
 
-    const previousMessages = await getMessagesByChatId({ id });
-
-    /* FIXME(@ai-sdk-upgrade-v5): The `appendClientMessage` option has been removed. Please manually migrate following https://ai-sdk.dev/docs/migration-guides/migration-guide-5-0#message-persistence-changes */
-    const messages = appendClientMessage({
-      // @ts-expect-error: todo add type conversion from DBMessage[] to UIMessage[]
-      messages: previousMessages,
-      message,
-    });
+    const messagesFromDb = await getMessagesByChatId({ id });
+    const uiMessages = [...convertToUIMessages(messagesFromDb), message];
 
     const { longitude, latitude, city, country } = geolocation(request);
 
@@ -333,7 +326,6 @@ export async function POST(request: Request) {
       country,
     };
 
-    /* FIXME(@ai-sdk-upgrade-v5): The `experimental_attachments` property has been replaced with the parts array. Please manually migrate following https://ai-sdk.dev/docs/migration-guides/migration-guide-5-0#attachments--file-parts */
     await saveMessages({
       messages: [
         {
@@ -341,7 +333,7 @@ export async function POST(request: Request) {
           id: message.id,
           role: 'user',
           parts: message.parts,
-          attachments: message.experimental_attachments ?? [],
+          attachments: [],
           createdAt: new Date(),
         },
       ],
@@ -350,48 +342,32 @@ export async function POST(request: Request) {
     const streamId = generateUUID();
     await createStreamId({ streamId, chatId: id });
 
-    // Check if user has sent a PDF
-    /* FIXME(@ai-sdk-upgrade-v5): The `experimental_attachments` property has been replaced with the parts array. Please manually migrate following https://ai-sdk.dev/docs/migration-guides/migration-guide-5-0#attachments--file-parts */
-    const messagesHavePDF = messages.some((message) =>
-      message.experimental_attachments?.some(
-        (a) => a.contentType === 'application/pdf',
-      ),
-    );
-
     // Get MCP tools for this user
     const { mcpTools, mcpActiveTools } = await getMcpToolsForAI(
       session.user.id,
     );
 
     console.log('🌊 Creating data stream with streamId:', streamId);
-    const stream = createDataStream({
-      execute: (dataStream) => {
-        // Combine built-in tools with MCP tools
-        const builtInActiveTools = [
-          'getWeather',
-          'createDocument',
-          'updateDocument',
-          'requestSuggestions',
-          'createMermaidDiagram',
-        ];
-        const allActiveTools = [...builtInActiveTools, ...mcpActiveTools];
-
-        console.log('🔄 Executing stream with tools:', allActiveTools);
+    const stream = createUIMessageStream({
+      execute: ({ writer: dataStream }) => {
         const result = streamText({
           model: myProvider.languageModel(selectedChatModel),
           system: systemPrompt({ selectedChatModel, requestHints }),
-          messages,
+          messages: convertToModelMessages(uiMessages),
           stopWhen: stepCountIs(5),
 
-          // MCP tools are added dynamically, so we need to cast
           experimental_activeTools:
             selectedChatModel === 'chat-model-reasoning'
               ? []
-              : (allActiveTools as any),
-
+              : ([
+                  'getWeather',
+                  'createDocument',
+                  'updateDocument',
+                  'requestSuggestions',
+                  'createMermaidDiagram',
+                  ...mcpActiveTools,
+                ] as any),
           experimental_transform: smoothStream({ chunking: 'word' }),
-          experimental_generateMessageId: generateUUID,
-
           tools: {
             getWeather,
             createDocument: createDocument({ session, dataStream }),
@@ -403,60 +379,30 @@ export async function POST(request: Request) {
             createMermaidDiagram: createMermaidDiagram({ session, dataStream }),
             ...mcpTools,
           },
-
-          onFinish: async ({ response }) => {
-            if (session.user?.id) {
-              try {
-                const assistantId = getTrailingMessageId({
-                  messages: response.messages.filter(
-                    (message) => message.role === 'assistant',
-                  ),
-                });
-
-                if (!assistantId) {
-                  throw new Error('No assistant message found!');
-                }
-
-                /* FIXME(@ai-sdk-upgrade-v5): The `appendResponseMessages` option has been removed. Please manually migrate following https://ai-sdk.dev/docs/migration-guides/migration-guide-5-0#message-persistence-changes */
-                const [, assistantMessage] = appendResponseMessages({
-                  messages: [message],
-                  responseMessages: response.messages,
-                });
-
-                /* FIXME(@ai-sdk-upgrade-v5): The `experimental_attachments` property has been replaced with the parts array. Please manually migrate following https://ai-sdk.dev/docs/migration-guides/migration-guide-5-0#attachments--file-parts */
-                await saveMessages({
-                  messages: [
-                    {
-                      id: assistantId,
-                      chatId: id,
-                      role: assistantMessage.role,
-                      parts: assistantMessage.parts,
-                      attachments:
-                        assistantMessage.experimental_attachments ?? [],
-                      createdAt: new Date(),
-                    },
-                  ],
-                });
-              } catch (_) {
-                console.error('Failed to save chat');
-              }
-            }
-          },
-
-          experimental_telemetry: {
-            isEnabled: isProductionEnvironment,
-            functionId: 'stream-text',
-          },
         });
 
         result.consumeStream();
 
-        result.mergeIntoUIMessageStream(dataStream, {
-          sendReasoning: true,
+        dataStream.merge(
+          result.toUIMessageStream({
+            sendReasoning: true,
+          }),
+        );
+      },
+      generateId: generateUUID,
+      onFinish: async ({ messages }) => {
+        await saveMessages({
+          messages: messages.map((message) => ({
+            id: message.id,
+            role: message.role,
+            parts: message.parts,
+            createdAt: new Date(),
+            attachments: [],
+            chatId: id,
+          })),
         });
       },
-      onError: (error) => {
-        console.error('DataStream error occurred:', error);
+      onError: () => {
         return 'Oops, an error occurred!';
       },
     });
@@ -465,10 +411,12 @@ export async function POST(request: Request) {
 
     if (streamContext) {
       return new Response(
-        await streamContext.resumableStream(streamId, () => stream),
+        await streamContext.resumableStream(streamId, () =>
+          stream.pipeThrough(new JsonToSseTransformStream()),
+        ),
       );
     } else {
-      return new Response(stream);
+      return new Response(stream.pipeThrough(new JsonToSseTransformStream()));
     }
   } catch (error) {
     if (error instanceof ChatSDKError) {
@@ -532,13 +480,12 @@ export async function GET(request: Request) {
     return new ChatSDKError('not_found:stream').toResponse();
   }
 
-  const emptyDataStream = createDataStream({
+  const emptyDataStream = createUIMessageStream<ChatMessage>({
     execute: () => {},
   });
 
-  const stream = await streamContext.resumableStream(
-    recentStreamId.id,
-    () => emptyDataStream,
+  const stream = await streamContext.resumableStream(recentStreamId, () =>
+    emptyDataStream.pipeThrough(new JsonToSseTransformStream()),
   );
 
   /*
@@ -563,17 +510,12 @@ export async function GET(request: Request) {
       return new Response(emptyDataStream, { status: 200 });
     }
 
-    const restoredStream = createDataStream({
-      execute: (buffer) => {
-        buffer.write({
-          type: 'data',
-
-          value: [
-            {
-              type: 'append-message',
-              message: JSON.stringify(mostRecentMessage),
-            },
-          ],
+    const restoredStream = createUIMessageStream<ChatMessage>({
+      execute: ({ writer }) => {
+        writer.write({
+          type: 'data-appendMessage',
+          data: JSON.stringify(mostRecentMessage),
+          transient: true,
         });
       },
     });
