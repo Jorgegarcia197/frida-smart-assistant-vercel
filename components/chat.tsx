@@ -78,15 +78,12 @@ export function Chat({
         };
       },
     }),
-
     onData: (dataPart) => {
       setDataStream((ds) => (ds ? [...ds, dataPart] : []));
     },
-
     onFinish: () => {
       mutate(unstable_serialize(getChatHistoryPaginationKey));
     },
-
     onError: (error) => {
       if (error instanceof ChatSDKError) {
         toast({
@@ -134,7 +131,6 @@ export function Chat({
       <div className="flex flex-col min-w-0 h-dvh bg-background">
         <ChatHeader
           chatId={id}
-          selectedModelId={initialChatModel}
           selectedVisibilityType={initialVisibilityType}
           isReadonly={isReadonly}
           session={session}
@@ -151,13 +147,14 @@ export function Chat({
           isArtifactVisible={isArtifactVisible}
         />
 
-        <form className="flex mx-auto px-4 bg-background pb-4 md:pb-6 gap-2 w-full md:max-w-3xl">
+        <div className="sticky bottom-0 flex gap-2 px-4 pb-4 mx-auto w-full bg-background md:pb-6 md:max-w-3xl z-[1] border-t-0">
           {!isReadonly && (
             <MultimodalInput
               attachments={attachments}
               chatId={id}
               input={input}
               messages={messages}
+              selectedModelId={initialChatModel}
               selectedVisibilityType={visibilityType}
               sendMessage={sendMessage}
               setAttachments={setAttachments}
@@ -165,28 +162,27 @@ export function Chat({
               setMessages={setMessages}
               status={status}
               stop={stop}
-              selectedModelId={initialChatModel}
             />
           )}
-        </form>
+        </div>
       </div>
 
       <Artifact
         attachments={attachments}
-        sendMessage={sendMessage}
         chatId={id}
         input={input}
         isReadonly={isReadonly}
         messages={messages}
         regenerate={regenerate}
+        selectedModelId={initialChatModel}
         selectedVisibilityType={visibilityType}
+        sendMessage={sendMessage}
         setAttachments={setAttachments}
         setInput={setInput}
         setMessages={setMessages}
         status={status}
         stop={stop}
         votes={votes}
-        selectedModelId={initialChatModel}
       />
     </>
   );
