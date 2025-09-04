@@ -302,31 +302,37 @@ const PurePreviewMessage = ({
                 );
               }
 
-              // Is a MCP Tool
-              if (type.startsWith('tool-') && type.includes('__')) {
-                // TODO: handle dynamic tools
-                const state = 'call';
-                const toolName = '';
+              // MCP Tool
+              if (type === 'dynamic-tool') {
+                const { state, toolCallId } = part;
+                const [serverName, toolName] = type.split('__', 2);
+
                 const args = {};
 
-                if (state === 'call') {
-                  <McpToolCard
-                    serverName={toolName.split('__')[0]}
-                    toolName={toolName}
-                    state="call"
-                    args={args}
-                    isReadonly={isReadonly}
-                  />;
-                } else if (state === 'result') {
-                  <McpToolCard
-                    serverName={toolName.split('__')[0]}
-                    toolName={toolName}
-                    state="result"
-                    result={
-                      'The tool was executed successfully! Check the result below.'
-                    }
-                    isReadonly={isReadonly}
-                  />;
+                if (state === 'input-available') {
+                  return (
+                    <McpToolCard
+                      key={toolCallId}
+                      serverName={serverName}
+                      toolName={toolName}
+                      state="call"
+                      args={args}
+                      isReadonly={isReadonly}
+                    />
+                  );
+                } else if (state === 'output-available') {
+                  return (
+                    <McpToolCard
+                      key={toolCallId}
+                      serverName={serverName}
+                      toolName={toolName}
+                      state="result"
+                      result={
+                        'The tool was executed successfully! Check the result below.'
+                      }
+                      isReadonly={isReadonly}
+                    />
+                  );
                 }
               }
             })}

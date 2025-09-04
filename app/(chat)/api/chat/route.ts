@@ -5,6 +5,7 @@ import {
   createUIMessageStream,
   convertToModelMessages,
   JsonToSseTransformStream,
+  dynamicTool,
 } from 'ai';
 import { auth } from '@/app/(auth)/auth';
 import { type RequestHints, systemPrompt } from '@/lib/ai/prompts';
@@ -26,7 +27,6 @@ import { getWeather } from '@/lib/ai/tools/get-weather';
 import { createMermaidDiagram } from '@/lib/ai/tools/create-mermaid-diagram';
 import { myProvider } from '@/lib/ai/providers';
 import { getMcpClientInstance } from '@/lib/mcp/mcp-singleton-instance';
-import { tool } from 'ai';
 import { z } from 'zod/v3';
 import { postRequestBodySchema, type PostRequestBody } from './schema';
 import { geolocation } from '@vercel/functions';
@@ -199,7 +199,7 @@ async function getMcpToolsForAI(userId: string) {
           }
         }
 
-        mcpTools[toolName] = tool({
+        mcpTools[toolName] = dynamicTool({
           description:
             mcpTool.description ||
             `MCP tool: ${mcpTool.name} from ${server.name}`,

@@ -1,6 +1,6 @@
 import { useState, useCallback, useEffect } from 'react';
-import { McpServer } from '@/lib/mcp/types';
-import { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
+import type { McpServer } from '@/lib/mcp/types';
+import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 
 interface UseMcpClientReturn {
   servers: McpServer[];
