@@ -14,21 +14,20 @@ import { getMcpServers, saveMcpServers } from './queries';
 
 // Types
 import {
-  McpConnection,
+  type McpConnection,
   MIN_MCP_TIMEOUT_SECONDS,
   DEFAULT_MCP_TIMEOUT_SECONDS,
-  McpTool,
-  McpResource,
-  McpResourceTemplate,
-  McpServer,
-  McpToolCallResponse,
+  type McpTool,
+  type McpResource,
+  type McpResourceTemplate,
+  type McpServer,
 } from './types';
 import {
   CallToolResultSchema,
   ListResourcesResultSchema,
   ListResourceTemplatesResultSchema,
   ListToolsResultSchema,
-  CallToolResult,
+  type CallToolResult,
 } from '@modelcontextprotocol/sdk/types.js';
 import { secondsToMs } from './utils';
 
@@ -72,7 +71,7 @@ export class MCPClient {
 
   // Variables
   connections: McpConnection[] = [];
-  isConnecting: boolean = false;
+  isConnecting = false;
 
   constructor(userId: string) {
     this.userId = userId;
@@ -90,7 +89,7 @@ export class MCPClient {
         JSON.stringify(mcpServersConfig, null, 2),
       );
 
-      if (mcpServersConfig && mcpServersConfig.mcpServers) {
+      if (mcpServersConfig?.mcpServers) {
         await this.updateServerConnections(mcpServersConfig.mcpServers);
         console.log(
           `[MCPClient] Successfully initialized ${Object.keys(mcpServersConfig.mcpServers).length} MCP server(s) for user ${this.userId}`,
