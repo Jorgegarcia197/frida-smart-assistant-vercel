@@ -105,7 +105,7 @@ const MCPHubContent = ({ setIsMCPHubOpen }: MCPHubContentProps) => {
       toast.success(`MCP server "${serverName}" was successfully ${action}`);
     } catch (error: any) {
       console.error('Error toggling server:', error);
-      toast.error('Error toggling server: ' + error.message);
+      toast.error(`Error toggling server: ${error.message}`);
     } finally {
       setTogglingServers((prev) => ({ ...prev, [serverName]: false }));
     }
@@ -133,7 +133,7 @@ const MCPHubContent = ({ setIsMCPHubOpen }: MCPHubContentProps) => {
       toast.success('MCP server added successfully');
     } catch (error: any) {
       console.error('Error adding remote MCP server:', error);
-      toast.error('Error adding remote MCP server: ' + error.message);
+      toast.error(`Error adding remote MCP server: ${error.message}`);
     } finally {
       setIsAddingServer(false);
     }
@@ -174,7 +174,7 @@ const MCPHubContent = ({ setIsMCPHubOpen }: MCPHubContentProps) => {
       toast.success(`MCP server "${serverName}" was successfully deleted`);
     } catch (error: any) {
       console.error('Error deleting server:', error);
-      toast.error('Error deleting server: ' + error.message);
+      toast.error(`Error deleting server: ${error.message}`);
     } finally {
       setDeletingServers((prev) => ({ ...prev, [serverName]: false }));
     }
@@ -526,6 +526,7 @@ const MCPHubContent = ({ setIsMCPHubOpen }: MCPHubContentProps) => {
                     <div className="flex items-center justify-between p-3">
                       <div className="flex items-center gap-3">
                         <button
+                          type="button"
                           onClick={(e) => {
                             e.preventDefault();
                             toggleExpanded(server.name);
@@ -557,6 +558,7 @@ const MCPHubContent = ({ setIsMCPHubOpen }: MCPHubContentProps) => {
 
                       <div className="flex items-center gap-2">
                         <button
+                          type="button"
                           className="p-1 hover:bg-muted rounded disabled:opacity-50"
                           onClick={(e) => {
                             e.preventDefault();
@@ -573,6 +575,7 @@ const MCPHubContent = ({ setIsMCPHubOpen }: MCPHubContentProps) => {
                           />
                         </button>
                         <button
+                          type="button"
                           onClick={(e) => {
                             e.preventDefault();
                             toggleServer(server.name, server.disabled ?? false);
@@ -602,7 +605,7 @@ const MCPHubContent = ({ setIsMCPHubOpen }: MCPHubContentProps) => {
                             <div className="space-y-4">
                               {server.tools.map((tool, index) => (
                                 <div
-                                  key={index}
+                                  key={`${tool.name}-${index}`}
                                   className="bg-background rounded-lg border p-4"
                                 >
                                   <div className="space-y-3">
