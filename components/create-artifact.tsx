@@ -1,9 +1,9 @@
+import type { Suggestion } from '@/lib/db/firebase-types';
 import type { UseChatHelpers } from '@ai-sdk/react';
 import type { ComponentType, Dispatch, ReactNode, SetStateAction } from 'react';
 import type { UIArtifact } from './artifact';
 import type { ChatMessage, CustomUIDataTypes } from '@/lib/types';
 import type { DataUIPart } from 'ai';
-import type { Suggestion } from '@/lib/db/firebase-types';
 
 export type ArtifactActionContext<M = any> = {
   content: string;

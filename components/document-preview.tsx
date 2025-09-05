@@ -179,7 +179,7 @@ const PureHitboxLayer = ({
 
   return (
     <div
-      className="size-full absolute top-0 left-0 rounded-xl z-10"
+      className="size-full absolute top-0 left-0 rounded-xl z-5"
       ref={hitboxRef}
       onClick={handleClick}
       role="presentation"
