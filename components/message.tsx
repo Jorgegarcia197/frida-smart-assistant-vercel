@@ -85,8 +85,8 @@ const PurePreviewMessage = ({
           <div
             className={cn('flex flex-col gap-4', {
               'min-h-96': message.role === 'assistant' && requiresScrollPadding,
-              'w-full': message.role === 'assistant',
               'w-fit': message.role === 'user',
+              'w-full': message.role === 'assistant' || mode === 'edit',
             })}
           >
             {attachmentsFromMessage.length > 0 && (
@@ -164,7 +164,7 @@ const PurePreviewMessage = ({
                       className="flex flex-row gap-3 items-start w-full"
                     >
                       <div className="size-8" />
-                      <div className="flex-1 min-w-0">
+                      <div className="flex-1 min-w-0 ">
                         <MessageEditor
                           key={message.id}
                           message={message}
