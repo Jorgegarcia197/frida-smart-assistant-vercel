@@ -8,6 +8,8 @@ interface Props {
 }
 
 function SidebarPortal({ isOpen, onClose, children }: Props) {
+  if (typeof document === 'undefined') return null;
+
   return createPortal(
     <AnimatePresence initial={false} mode="wait">
       {isOpen && (
