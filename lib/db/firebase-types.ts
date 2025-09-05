@@ -50,7 +50,7 @@ export type Document = {
   createdAt: Date; // timestamp
   title: string; // not null
   content: string | null; // nullable
-  kind: 'text' | 'code' | 'image' | 'sheet'; // not null, default 'text'
+  kind: 'text' | 'code' | 'image' | 'sheet' | 'mermaid'; // not null, default 'text'
   userId: string; // uuid
 };
 

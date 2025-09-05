@@ -8,19 +8,19 @@ import {
   useMemo,
   useRef,
 } from 'react';
-import type { ArtifactKind, UIArtifact } from './artifact';
-import { FileIcon, FullscreenIcon, ImageIcon, LoaderIcon } from './icons';
 import { cn, fetcher } from '@/lib/utils';
-import type { Document } from '@/lib/db/firebase-types';
-import { InlineDocumentSkeleton } from './document-skeleton';
-import useSWR from 'swr';
-import { Editor } from './text-editor';
-import { DocumentToolCall, DocumentToolResult } from './document';
 import { CodeEditor } from './code-editor';
+import { DocumentToolCall, DocumentToolResult } from './document';
+import { Editor } from './text-editor';
+import { FileIcon, FullscreenIcon, ImageIcon, LoaderIcon } from './icons';
+import { ImageEditor } from './image-editor';
+import { InlineDocumentSkeleton } from './document-skeleton';
+import { SpreadsheetEditor } from './sheet-editor';
 import { useArtifact } from '@/hooks/use-artifact';
 import equal from 'fast-deep-equal';
-import { SpreadsheetEditor } from './sheet-editor';
-import { ImageEditor } from './image-editor';
+import type { ArtifactKind, UIArtifact } from './artifact';
+import type { Document } from '@/lib/db/firebase-types';
+import useSWR from 'swr';
 
 interface DocumentPreviewProps {
   isReadonly: boolean;

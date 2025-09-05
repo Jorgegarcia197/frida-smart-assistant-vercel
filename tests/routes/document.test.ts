@@ -1,6 +1,6 @@
-import type { Document } from '@/lib/db/schema';
-import { generateUUID } from '@/lib/utils';
+import type { Document } from '@/lib/db/firebase-types';
 import { expect, test } from '../fixtures';
+import { generateUUID } from '@/lib/utils';
 import { getMessageByErrorCode } from '@/lib/errors';
 
 const documentsCreatedByAda: Array<Document> = [];
