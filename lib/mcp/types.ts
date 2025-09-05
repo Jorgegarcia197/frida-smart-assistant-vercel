@@ -1,10 +1,10 @@
 // MCP imports
-import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js";
-import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
+import type { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import type { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js";
+import type { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 
 // Types
-import { McpServerConfig } from "./client";
+import type { McpServerConfig } from "./client";
 
 export const DEFAULT_MCP_TIMEOUT_SECONDS = 60; // matches Anthropic's default timeout in their MCP SDK
 export const MIN_MCP_TIMEOUT_SECONDS = 1;

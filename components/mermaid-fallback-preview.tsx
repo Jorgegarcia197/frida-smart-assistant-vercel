@@ -25,7 +25,7 @@ export function MermaidFallbackPreview({
       <div className="flex items-center justify-between mb-4">
         <h3 className="text-lg font-semibold">{title}</h3>
         <div className="flex items-center gap-2">
-          <div className="w-2 h-2 bg-yellow-500 rounded-full animate-pulse"></div>
+          <div className="w-2 h-2 bg-yellow-500 rounded-full animate-pulse" />
           <span className="text-sm text-gray-500">Preview Mode</span>
         </div>
       </div>

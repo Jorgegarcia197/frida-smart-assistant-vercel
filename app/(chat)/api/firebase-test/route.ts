@@ -1,4 +1,4 @@
-import { NextRequest } from 'next/server';
+import type { NextRequest } from 'next/server';
 import { diagnoseFirebaseSetup } from '@/lib/db/queries';
 import { auth } from '@/app/(auth)/auth';
 

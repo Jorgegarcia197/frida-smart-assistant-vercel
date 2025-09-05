@@ -4,7 +4,7 @@
 import { db } from "@/lib/firebase";
 
 // Types
-import { McpServerFirebaseConfig } from "./types";
+import type { McpServerFirebaseConfig } from "./types";
 
 /**
  * Fetch MCP servers configuration for a specific user

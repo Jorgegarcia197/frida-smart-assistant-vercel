@@ -2,7 +2,7 @@ import { compare } from 'bcrypt-ts';
 import NextAuth, { type DefaultSession } from 'next-auth';
 import Credentials from 'next-auth/providers/credentials';
 import { createGuestUser, getUser } from '@/lib/db/queries';
-import { getFirebaseUser, syncFirebaseUserToFirestore, validateFirebaseCredentials } from '@/lib/auth/firebase-auth';
+import { syncFirebaseUserToFirestore, validateFirebaseCredentials } from '@/lib/auth/firebase-auth';
 import { authConfig } from './auth.config';
 import { DUMMY_PASSWORD } from '@/lib/constants';
 import type { DefaultJWT } from 'next-auth/jwt';

@@ -17,7 +17,10 @@ export interface FirebaseAuthUser {
 /**
  * Creates a user in both Firebase Auth and Firestore users collection
  */
-export async function createFirebaseUser(email: string, password: string): Promise<{ id: string; email: string }> {
+export async function createFirebaseUser(
+  email: string,
+  password: string,
+): Promise<{ id: string; email: string }> {
   try {
     // Create user in Firebase Auth
     const userRecord = await firebaseAuth.createUser({
@@ -37,7 +40,7 @@ export async function createFirebaseUser(email: string, password: string): Promi
 
     return {
       id: userRecord.uid,
-      email: userRecord.email!,
+      email: userRecord.email || '',
     };
   } catch (error: any) {
     // Handle Firebase Auth errors
@@ -50,7 +53,7 @@ export async function createFirebaseUser(email: string, password: string): Promi
     if (error.code === 'auth/weak-password') {
       throw new ChatSDKError('bad_request:auth', 'Password is too weak');
     }
-    
+
     console.error('Firebase Auth creation error:', error);
     throw new ChatSDKError('bad_request:auth', 'Failed to create user');
   }
@@ -59,12 +62,14 @@ export async function createFirebaseUser(email: string, password: string): Promi
 /**
  * Gets a user from Firebase Auth
  */
-export async function getFirebaseUser(email: string): Promise<FirebaseAuthUser | null> {
+export async function getFirebaseUser(
+  email: string,
+): Promise<FirebaseAuthUser | null> {
   try {
     const userRecord = await firebaseAuth.getUserByEmail(email);
     return {
       uid: userRecord.uid,
-      email: userRecord.email!,
+      email: userRecord.email || '',
       emailVerified: userRecord.emailVerified,
       displayName: userRecord.displayName,
       photoURL: userRecord.photoURL,
@@ -81,14 +86,16 @@ export async function getFirebaseUser(email: string): Promise<FirebaseAuthUser |
 /**
  * Verifies a Firebase Auth custom token
  */
-export async function verifyFirebaseToken(token: string): Promise<FirebaseAuthUser | null> {
+export async function verifyFirebaseToken(
+  token: string,
+): Promise<FirebaseAuthUser | null> {
   try {
     const decodedToken = await firebaseAuth.verifyIdToken(token);
     const userRecord = await firebaseAuth.getUser(decodedToken.uid);
-    
+
     return {
       uid: userRecord.uid,
-      email: userRecord.email!,
+      email: userRecord.email || '',
       emailVerified: userRecord.emailVerified,
       displayName: userRecord.displayName,
       photoURL: userRecord.photoURL,
@@ -115,7 +122,10 @@ export async function createCustomToken(uid: string): Promise<string> {
 /**
  * Updates user password in Firebase Auth
  */
-export async function updateFirebaseUserPassword(uid: string, newPassword: string): Promise<void> {
+export async function updateFirebaseUserPassword(
+  uid: string,
+  newPassword: string,
+): Promise<void> {
   try {
     await firebaseAuth.updateUser(uid, {
       password: newPassword,
@@ -151,49 +161,59 @@ export async function deleteFirebaseUser(uid: string): Promise<void> {
 /**
  * Validates Firebase Auth credentials using Firebase Auth REST API
  */
-export async function validateFirebaseCredentials(email: string, password: string): Promise<FirebaseAuthUser | null> {
+export async function validateFirebaseCredentials(
+  email: string,
+  password: string,
+): Promise<FirebaseAuthUser | null> {
   try {
     const apiKey = process.env.NEXT_PUBLIC_FIREBASE_API_KEY;
     if (!apiKey) {
-      console.error('Firebase API key not configured. Please set NEXT_PUBLIC_FIREBASE_API_KEY in your environment variables.');
+      console.error(
+        'Firebase API key not configured. Please set NEXT_PUBLIC_FIREBASE_API_KEY in your environment variables.',
+      );
       return null;
     }
 
     console.log('Attempting Firebase Auth validation for:', email);
 
     // Use Firebase Auth REST API to validate credentials
-    const response = await fetch(`https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=${apiKey}`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
+    const response = await fetch(
+      `https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=${apiKey}`,
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          email,
+          password,
+          returnSecureToken: true,
+        }),
       },
-      body: JSON.stringify({
-        email,
-        password,
-        returnSecureToken: true,
-      }),
-    });
+    );
 
     if (!response.ok) {
       const error = await response.json();
       console.error('Firebase Auth validation failed:', {
         status: response.status,
         statusText: response.statusText,
-        error: error
+        error: error,
       });
       return null;
     }
 
     const data = await response.json();
     console.log('Firebase Auth validation successful for:', email);
-    
+
     // Get the full user record from Firebase Admin
     const firebaseUser = await getFirebaseUser(email);
     if (firebaseUser) {
       console.log('Successfully retrieved Firebase user record');
       return firebaseUser;
     } else {
-      console.error('Could not retrieve Firebase user record after successful auth');
+      console.error(
+        'Could not retrieve Firebase user record after successful auth',
+      );
       return null;
     }
   } catch (error) {
@@ -208,26 +228,26 @@ export async function validateFirebaseCredentials(email: string, password: strin
 export async function syncFirebaseUserToFirestore(uid: string): Promise<User> {
   try {
     const userRecord = await firebaseAuth.getUser(uid);
-    
+
     const userData: Partial<User> = {
-      email: userRecord.email!,
+      email: userRecord.email || '',
       createdAt: new Date(userRecord.metadata.creationTime),
     };
 
     // Check if user already exists in Firestore
     const userDoc = await db.collection('users').doc(uid).get();
-    
+
     if (!userDoc.exists) {
       await db.collection('users').doc(uid).set(userData);
     }
 
     return {
       id: uid,
-      email: userRecord.email!,
+      email: userRecord.email || '',
       createdAt: new Date(userRecord.metadata.creationTime),
     } as User;
   } catch (error) {
     console.error('User sync error:', error);
     throw new ChatSDKError('bad_request:auth', 'Failed to sync user');
   }
-} 
+}
