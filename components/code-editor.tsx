@@ -6,7 +6,7 @@ import { python } from '@codemirror/lang-python';
 import { oneDark } from '@codemirror/theme-one-dark';
 import { basicSetup } from 'codemirror';
 import React, { memo, useEffect, useRef } from 'react';
-import { Suggestion } from '@/lib/db/firebase-types';
+import type { Suggestion } from '@/lib/db/firebase-types';
 
 type EditorProps = {
   content: string;

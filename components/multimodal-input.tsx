@@ -29,6 +29,7 @@ import type { VisibilityType } from './visibility-selector';
 import MCPHubContent from './mcp-hub-content';
 import type { ChatMessage } from '@/lib/types';
 import type { LegacyAttachment } from '@/lib/db/firebase-types';
+import SidebarPortal from './sidebar-portal';
 
 function PureMultimodalInput({
   chatId,
@@ -325,32 +326,12 @@ function PureMultimodalInput({
           <Server className="size-4" />
         </Button>
 
-        <AnimatePresence>
-          {isMCPHubOpen && (
-            <>
-              {/* Overlay */}
-              <motion.div
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                exit={{ opacity: 0 }}
-                transition={{ duration: 0.2 }}
-                className="fixed inset-0 z-50 bg-black/80"
-                onClick={() => setIsMCPHubOpen(false)}
-              />
-
-              {/* Left sliding panel */}
-              <motion.div
-                initial={{ x: '100%' }}
-                animate={{ x: 0 }}
-                exit={{ x: '100%' }}
-                transition={{ type: 'spring', stiffness: 300, damping: 30 }}
-                className="fixed inset-y-0 right-0 z-50 h-screen md:w-[400px] md:max-w-[90vw] sm:w-full sm:max-w-full bg-background border-l"
-              >
-                <MCPHubContent setIsMCPHubOpen={setIsMCPHubOpen} />
-              </motion.div>
-            </>
-          )}
-        </AnimatePresence>
+        <SidebarPortal
+          isOpen={isMCPHubOpen}
+          onClose={() => setIsMCPHubOpen(false)}
+        >
+          <MCPHubContent setIsMCPHubOpen={setIsMCPHubOpen} />
+        </SidebarPortal>
       </div>
 
       <div className="absolute bottom-0 right-0 p-2 w-fit flex flex-row justify-end gap-2 items-center">
