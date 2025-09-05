@@ -18,7 +18,7 @@ import {
   saveChat,
   saveMessages,
 } from '@/lib/db/queries';
-import { generateUUID } from '@/lib/utils';
+import { convertToUIMessages, generateUUID } from '@/lib/utils';
 import { generateTitleFromUserMessage } from '../../actions';
 import { createDocument } from '@/lib/ai/tools/create-document';
 import { updateDocument } from '@/lib/ai/tools/update-document';
@@ -38,7 +38,6 @@ import { after } from 'next/server';
 import type { Chat } from '@/lib/db/firebase-types';
 import { differenceInSeconds } from 'date-fns';
 import { ChatSDKError } from '@/lib/errors';
-import { convertToUIMessages } from '../../utils';
 import type { ChatMessage } from '@/lib/types';
 
 export const maxDuration = 60;
