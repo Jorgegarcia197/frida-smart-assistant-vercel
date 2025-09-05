@@ -9,17 +9,11 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
-
   DropdownMenuTrigger,
 } from './ui/dropdown-menu';
-import {
-
-  MoreHorizontalIcon,
-
-  TrashIcon,
-} from './icons';
+import { MoreHorizontalIcon, TrashIcon } from './icons';
 import { memo } from 'react';
-import { useChatVisibility } from '@/hooks/use-chat-visibility';
+import { useDataStream } from './data-stream-provider';
 
 const PureChatItem = ({
   chat,
@@ -32,15 +26,17 @@ const PureChatItem = ({
   onDelete: (chatId: string) => void;
   setOpenMobile: (open: boolean) => void;
 }) => {
-  const { visibilityType, setVisibilityType } = useChatVisibility({
-    chatId: chat.id,
-    initialVisibilityType: chat.visibility,
-  });
+  const { setDataStream } = useDataStream();
+
+  const handleChatClick = () => {
+    setDataStream([]); // Clear data stream when switching chats
+    setOpenMobile(false);
+  };
 
   return (
     <SidebarMenuItem>
       <SidebarMenuButton asChild isActive={isActive}>
-        <Link href={`/chat/${chat.id}`} onClick={() => setOpenMobile(false)}>
+        <Link href={`/chat/${chat.id}`} onClick={handleChatClick}>
           <span>{chat.title}</span>
         </Link>
       </SidebarMenuButton>
@@ -57,9 +53,6 @@ const PureChatItem = ({
         </DropdownMenuTrigger>
 
         <DropdownMenuContent side="bottom" align="end">
-
-           
-
           <DropdownMenuItem
             className="cursor-pointer text-destructive focus:bg-destructive/15 focus:text-destructive dark:text-red-500"
             onSelect={() => onDelete(chat.id)}
