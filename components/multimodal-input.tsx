@@ -1,7 +1,6 @@
 'use client';
 
 import type { UIMessage } from 'ai';
-import cx from 'classnames';
 import type React from 'react';
 import {
   useRef,
@@ -18,7 +17,6 @@ import { useLocalStorage, useWindowSize } from 'usehooks-ts';
 import { ArrowUpIcon, PaperclipIcon, StopIcon } from './icons';
 import { PreviewAttachment } from './preview-attachment';
 import { Button } from './ui/button';
-import { Textarea } from './ui/textarea';
 import { SuggestedActions } from './suggested-actions';
 import equal from 'fast-deep-equal';
 import type { UseChatHelpers } from '@ai-sdk/react';
@@ -30,6 +28,13 @@ import MCPHubContent from './mcp-hub-content';
 import type { ChatMessage } from '@/lib/types';
 import type { LegacyAttachment } from '@/lib/db/firebase-types';
 import SidebarPortal from './sidebar-portal';
+import {
+  PromptInput,
+  PromptInputSubmit,
+  PromptInputTextarea,
+  PromptInputToolbar,
+  PromptInputTools,
+} from './elements/prompt-input';
 
 function PureMultimodalInput({
   chatId,
@@ -71,15 +76,13 @@ function PureMultimodalInput({
 
   const adjustHeight = () => {
     if (textareaRef.current) {
-      textareaRef.current.style.height = 'auto';
-      textareaRef.current.style.height = `${textareaRef.current.scrollHeight + 2}px`;
+      textareaRef.current.style.height = '72px';
     }
   };
 
   const resetHeight = () => {
     if (textareaRef.current) {
-      textareaRef.current.style.height = 'auto';
-      textareaRef.current.style.height = '98px';
+      textareaRef.current.style.height = '72px';
     }
   };
 
@@ -106,7 +109,6 @@ function PureMultimodalInput({
 
   const handleInput = (event: React.ChangeEvent<HTMLTextAreaElement>) => {
     setInput(event.target.value);
-    adjustHeight();
   };
 
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -213,7 +215,7 @@ function PureMultimodalInput({
   }, [status, scrollToBottom]);
 
   return (
-    <div className="relative w-full flex flex-col gap-4">
+    <div className="flex relative flex-col gap-4 w-full">
       <AnimatePresence>
         {!isAtBottom && (
           <motion.div
@@ -221,7 +223,7 @@ function PureMultimodalInput({
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: 10 }}
             transition={{ type: 'spring', stiffness: 300, damping: 20 }}
-            className="absolute left-1/2 bottom-28 -translate-x-1/2 z-50"
+            className="absolute -top-14 left-1/2 z-50 -translate-x-1/2"
           >
             <Button
               data-testid="scroll-to-bottom-button"
@@ -260,105 +262,99 @@ function PureMultimodalInput({
         aria-label="Upload images or PDF files"
       />
 
-      {(attachments.length > 0 || uploadQueue.length > 0) && (
-        <div
-          data-testid="attachments-preview"
-          className="flex flex-row gap-2 overflow-x-scroll items-end"
-        >
-          {attachments.map((attachment) => (
-            <PreviewAttachment key={attachment.url} attachment={attachment} />
-          ))}
-
-          {uploadQueue.map((filename) => (
-            <PreviewAttachment
-              key={filename}
-              attachment={{
-                url: '',
-                name: filename,
-                contentType: '',
-              }}
-              isUploading={true}
-            />
-          ))}
-        </div>
-      )}
-
-      <Textarea
-        data-testid="multimodal-input"
-        ref={textareaRef}
-        placeholder="Send a message..."
-        value={input}
-        onChange={handleInput}
-        className={cx(
-          'min-h-[24px] max-h-[calc(75dvh)] overflow-hidden resize-none rounded-2xl !text-base bg-muted pb-10 dark:border-zinc-700',
-          className,
-        )}
-        rows={2}
-        autoFocus
-        onKeyDown={(event) => {
-          if (
-            event.key === 'Enter' &&
-            !event.shiftKey &&
-            !event.nativeEvent.isComposing
-          ) {
-            event.preventDefault();
-
-            if (status !== 'ready') {
-              toast.error('Please wait for the model to finish its response!');
-            } else {
-              submitForm();
-            }
+      <PromptInput
+        className="bg-gray-50 rounded-3xl border border-gray-300 shadow-none transition-all duration-200 dark:bg-sidebar dark:border-sidebar-border hover:ring-1 hover:ring-primary/30 focus-within:ring-1 focus-within:ring-primary/50"
+        onSubmit={(event) => {
+          event.preventDefault();
+          if (status !== 'ready') {
+            toast.error('Please wait for the model to finish its response!');
+          } else {
+            submitForm();
           }
         }}
-      />
-
-      <div className="absolute bottom-0 p-2 w-fit flex flex-row justify-start items-center">
-        <AttachmentsButton fileInputRef={fileInputRef} status={status} />
-        <Button
-          variant="ghost"
-          className="rounded-md rounded-bl-lg p-[7px] h-fit dark:border-zinc-700 hover:dark:bg-zinc-900 hover:bg-zinc-200"
-          onClick={(e) => {
-            e.preventDefault();
-            setIsMCPHubOpen(true);
-          }}
-          disabled={status !== 'ready'}
-        >
-          <Server className="size-4" />
-        </Button>
-
-        <SidebarPortal
-          isOpen={isMCPHubOpen}
-          onClose={() => setIsMCPHubOpen(false)}
-        >
-          <MCPHubContent setIsMCPHubOpen={setIsMCPHubOpen} />
-        </SidebarPortal>
-      </div>
-
-      <div className="absolute bottom-0 right-0 p-2 w-fit flex flex-row justify-end gap-2 items-center">
-        {input.length > 0 && (
+      >
+        {(attachments.length > 0 || uploadQueue.length > 0) && (
           <div
-            className={cx(
-              'text-xs px-2 py-1 rounded-md transition-colors',
-              input.length > 100000
-                ? 'text-red-500 bg-red-50 dark:bg-red-900/20'
-                : input.length > 90000
-                  ? 'text-yellow-600 bg-yellow-50 dark:bg-yellow-900/20'
-                  : 'text-muted-foreground bg-muted',
-            )}
+            data-testid="attachments-preview"
+            className="flex overflow-x-auto flex-row gap-2 items-end px-3 py-2"
           >
-            {input.length.toLocaleString()}/100,000
+            {attachments.map((attachment) => (
+              <PreviewAttachment
+                key={attachment.url}
+                attachment={attachment}
+                onRemove={() => {
+                  setAttachments((currentAttachments) =>
+                    currentAttachments.filter((a) => a.url !== attachment.url),
+                  );
+                  if (fileInputRef.current) {
+                    fileInputRef.current.value = '';
+                  }
+                }}
+              />
+            ))}
+
+            {uploadQueue.map((filename) => (
+              <PreviewAttachment
+                key={filename}
+                attachment={{
+                  url: '',
+                  name: filename,
+                  contentType: '',
+                }}
+                isUploading={true}
+              />
+            ))}
           </div>
         )}
-        {status === 'submitted' ? (
-          <StopButton stop={stop} setMessages={setMessages} />
-        ) : (
-          <SendButton
-            input={input}
-            submitForm={submitForm}
-            uploadQueue={uploadQueue}
-          />
-        )}
-      </div>
+
+        <PromptInputTextarea
+          data-testid="multimodal-input"
+          ref={textareaRef}
+          placeholder="Send a message..."
+          value={input}
+          onChange={handleInput}
+          minHeight={72}
+          maxHeight={200}
+          disableAutoResize={true}
+          className="text-base resize-none pt-4 pb-0 px-4bg-transparent !border-0 !border-none outline-none ring-0 focus-visible:ring-0 focus-visible:ring-offset-0 focus-visible:outline-none"
+          rows={1}
+          autoFocus
+        />
+        <PromptInputToolbar className="px-4 py-2 !border-t-0 !border-top-0 shadow-none dark:!border-transparent dark:border-0">
+          <PromptInputTools className="gap-2">
+            <AttachmentsButton fileInputRef={fileInputRef} status={status} />
+            <Button
+              variant="ghost"
+              className="rounded-md rounded-bl-lg p-[7px] h-fit dark:border-zinc-700 hover:dark:bg-zinc-900 hover:bg-zinc-200"
+              onClick={(e) => {
+                e.preventDefault();
+                setIsMCPHubOpen(true);
+              }}
+              disabled={status !== 'ready'}
+            >
+              <Server className="size-4" />
+            </Button>
+
+            <SidebarPortal
+              isOpen={isMCPHubOpen}
+              onClose={() => setIsMCPHubOpen(false)}
+            >
+              <MCPHubContent setIsMCPHubOpen={setIsMCPHubOpen} />
+            </SidebarPortal>
+          </PromptInputTools>
+          {status === 'submitted' ? (
+            <StopButton stop={stop} setMessages={setMessages} />
+          ) : (
+            <PromptInputSubmit
+              status={status}
+              disabled={!input.trim() || uploadQueue.length > 0}
+              className="p-3 text-gray-700 bg-gray-200 rounded-full hover:bg-gray-300 dark:bg-sidebar-accent dark:hover:bg-sidebar-accent/80 dark:text-gray-300"
+            >
+              <ArrowUpIcon size={20} />
+            </PromptInputSubmit>
+          )}
+        </PromptInputToolbar>
+      </PromptInput>
     </div>
   );
 }
