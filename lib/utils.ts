@@ -8,8 +8,9 @@ import { type ClassValue, clsx } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 import type { DBMessage, Document } from '@/lib/db/firebase-types';
 import { ChatSDKError, type ErrorCode } from './errors';
-import type { ChatMessage, ChatTools, CustomUIDataTypes } from './types';
+import type { ChatMessage, CustomUIDataTypes } from './types';
 import { formatISO } from 'date-fns';
+import type { ChatTools } from './ai/types';
 
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));

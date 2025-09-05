@@ -5,7 +5,8 @@ import type { UIArtifact } from './artifact';
 import type { UseChatHelpers } from '@ai-sdk/react';
 import { motion } from 'framer-motion';
 import { useMessages } from '@/hooks/use-messages';
-import type { ChatMessage, Vote } from '@/lib/types';
+import type { ChatMessage } from '@/lib/types';
+import type { Vote } from '@/lib/db/firebase-types';
 
 interface ArtifactMessagesProps {
   chatId: string;

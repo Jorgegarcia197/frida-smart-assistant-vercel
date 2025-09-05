@@ -1,4 +1,3 @@
-import type { ArtifactKind } from '@/components/artifact';
 import type { VisibilityType } from '@/components/visibility-selector';
 
 // User collection document
@@ -46,27 +45,27 @@ export interface Vote {
 }
 
 // Document collection document
-export interface Document {
-  id: string;
-  createdAt: Date;
-  title: string;
-  content: string | null;
-  kind: ArtifactKind;
-  userId: string;
-}
+export type Document = {
+  id: string; // uuid
+  createdAt: Date; // timestamp
+  title: string; // not null
+  content: string | null; // nullable
+  kind: 'text' | 'code' | 'image' | 'sheet'; // not null, default 'text'
+  userId: string; // uuid
+};
 
 // Suggestion collection document (subcollection of Document)
-export interface Suggestion {
-  id: string;
-  documentId: string;
-  documentCreatedAt: Date;
+export type Suggestion = {
+  id: string; // uuid
+  documentId: string; // uuid
+  documentCreatedAt: Date; // timestamp
   originalText: string;
   suggestedText: string;
-  description: string | null;
-  isResolved: boolean;
-  userId: string;
-  createdAt: Date;
-}
+  description: string | null; // nullable
+  isResolved: boolean; // default false
+  userId: string; // uuid
+  createdAt: Date; // timestamp
+};
 
 // Stream collection document (subcollection of Chat)
 export interface Stream {
