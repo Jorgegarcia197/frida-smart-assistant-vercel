@@ -1,11 +1,5 @@
 import { Artifact } from '@/components/create-artifact';
-import { DocumentSkeleton } from '@/components/document-skeleton';
-import {
-  CopyIcon,
-  DownloadIcon,
-  RedoIcon,
-  UndoIcon,
-} from '@/components/icons';
+import { CopyIcon, DownloadIcon, RedoIcon, UndoIcon } from '@/components/icons';
 import { RotateCcw, FileImage } from 'lucide-react';
 import { toast } from 'sonner';
 import { useEffect, useState, useRef } from 'react';
@@ -18,7 +12,7 @@ import {
   CardTitle,
 } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { Download, Maximize2 } from 'lucide-react';
+import { Download } from 'lucide-react';
 
 // Loading component for streaming Mermaid diagrams
 function MermaidStreamingLoader({ isInline = false }: { isInline?: boolean }) {
@@ -41,8 +35,10 @@ function MermaidStreamingLoader({ isInline = false }: { isInline?: boolean }) {
         <CardContent className="p-4 pt-0">
           <div className="border rounded p-4 bg-white min-h-[300px] flex flex-col items-center justify-center gap-4">
             <div className="flex items-center gap-3">
-              <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-blue-600"></div>
-              <span className="text-sm text-gray-600">Generating diagram...</span>
+              <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-blue-600" />
+              <span className="text-sm text-gray-600">
+                Generating diagram...
+              </span>
             </div>
             <div className="flex flex-col gap-2 w-full max-w-md">
               <div className="animate-pulse rounded-lg h-4 bg-muted-foreground/20 w-full" />
@@ -59,7 +55,7 @@ function MermaidStreamingLoader({ isInline = false }: { isInline?: boolean }) {
     <div className="h-full w-full flex flex-col items-center justify-center p-8 bg-white">
       <div className="flex flex-col items-center gap-4 max-w-md w-full">
         <div className="flex items-center gap-3 mb-4">
-          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
+          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600" />
           <span className="text-lg text-gray-700">Generating diagram...</span>
         </div>
         <div className="w-full space-y-3">
@@ -106,16 +102,17 @@ function MermaidRenderer({
   useEffect(() => {
     const renderDiagram = async () => {
       if (!diagram || !containerRef.current) {
-        console.log('Mermaid: Missing diagram or container', { diagram: !!diagram, container: !!containerRef.current });
+        console.log('Mermaid: Missing diagram or container', {
+          diagram: !!diagram,
+          container: !!containerRef.current,
+        });
         return;
       }
 
       try {
         setError(null);
         setRenderedContent(null); // Clear previous content
-        
-        console.log('Mermaid: Rendering diagram', diagram.substring(0, 100) + '...');
-        
+
         // Initialize mermaid with configuration
         mermaid.initialize({
           startOnLoad: false,
@@ -126,16 +123,17 @@ function MermaidRenderer({
 
         // Generate unique ID for this diagram
         const diagramId = `mermaid-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
-        
+
         // Render the diagram to SVG
         const { svg } = await mermaid.render(diagramId, diagram);
-        
-        console.log('Mermaid: Successfully rendered SVG', svg.substring(0, 100) + '...');
+
         setRenderedContent(svg);
       } catch (err) {
         console.error('Mermaid rendering error:', err);
-        setError(`Error rendering diagram: ${err instanceof Error ? err.message : 'Unknown error'}`);
-        
+        setError(
+          `Error rendering diagram: ${err instanceof Error ? err.message : 'Unknown error'}`,
+        );
+
         // Fallback to showing code if rendering fails
         const fallbackContent = `
 <div style="background: #fef2f2; padding: 1rem; border-radius: 4px; border: 1px solid #fecaca;">
@@ -174,7 +172,7 @@ function MermaidRenderer({
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-                   a.download = 'diagram.svg';
+      a.download = 'diagram.svg';
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
@@ -189,41 +187,41 @@ function MermaidRenderer({
       try {
         // Create a new image element
         const img = new Image();
-        
+
         // Set crossOrigin to avoid CORS issues
         img.crossOrigin = 'anonymous';
-        
+
         // Create a data URL from the SVG content to avoid tainted canvas
         const svgDataUrl = `data:image/svg+xml;base64,${btoa(unescape(encodeURIComponent(renderedContent)))}`;
-        
+
         img.onload = () => {
           // Create a canvas element
           const canvas = document.createElement('canvas');
           const ctx = canvas.getContext('2d');
-          
+
           if (!ctx) {
             toast.error('Canvas not supported');
             return;
           }
-          
+
           // Set canvas dimensions to match the image
           canvas.width = img.naturalWidth || img.width;
           canvas.height = img.naturalHeight || img.height;
-          
+
           // Fill canvas with white background (optional, for transparency)
           ctx.fillStyle = 'white';
           ctx.fillRect(0, 0, canvas.width, canvas.height);
-          
+
           // Draw the image onto the canvas
           ctx.drawImage(img, 0, 0);
-          
+
           // Convert canvas to PNG blob and download
           canvas.toBlob((blob) => {
             if (blob) {
               const url = URL.createObjectURL(blob);
               const a = document.createElement('a');
               a.href = url;
-                                 a.download = 'diagram.png';
+              a.download = 'diagram.png';
               document.body.appendChild(a);
               a.click();
               document.body.removeChild(a);
@@ -233,14 +231,14 @@ function MermaidRenderer({
               toast.error('Failed to create PNG');
             }
           }, 'image/png');
-          
+
           // No cleanup needed for data URL
         };
-        
+
         img.onerror = () => {
           toast.error('Failed to load SVG for PNG conversion');
         };
-        
+
         img.src = svgDataUrl;
       } catch (error) {
         console.error('Error converting SVG to PNG:', error);
@@ -265,7 +263,7 @@ function MermaidRenderer({
 
     return (
       <div className="flex justify-center items-center h-[200px]">
-        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-gray-900"></div>
+        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-gray-900" />
       </div>
     );
   };
@@ -331,7 +329,7 @@ function MermaidRenderer({
 
   return (
     <div className="h-full w-full flex flex-col">
-      <div 
+      <div
         ref={containerRef}
         className="flex-grow overflow-auto p-4 bg-white"
         style={{
@@ -351,223 +349,230 @@ interface MermaidArtifactMetadata {
   description?: string;
 }
 
-export const mermaidArtifact = new Artifact<'mermaid', MermaidArtifactMetadata>({
-  kind: 'mermaid',
-  description: 'Useful for creating diagrams, flowcharts, and visualizations using Mermaid syntax.',
-  initialize: async ({ setMetadata }) => {
-    setMetadata({
-      type: 'flowchart',
-      description: '',
-    });
+export const mermaidArtifact = new Artifact<'mermaid', MermaidArtifactMetadata>(
+  {
+    kind: 'mermaid',
+    description:
+      'Useful for creating diagrams, flowcharts, and visualizations using Mermaid syntax.',
+    initialize: async ({ setMetadata }) => {
+      setMetadata({
+        type: 'flowchart',
+        description: '',
+      });
+    },
+    onStreamPart: ({ streamPart, setMetadata, setArtifact }) => {
+      if (streamPart.type === 'data-mermaid-type') {
+        setMetadata((metadata) => ({
+          ...metadata,
+          type: streamPart.data,
+        }));
+      }
+
+      if (streamPart.type === 'data-mermaid-description') {
+        setMetadata((metadata) => ({
+          ...metadata,
+          description: streamPart.data,
+        }));
+      }
+
+      if (streamPart.type === 'data-mermaid-delta') {
+        setArtifact((draftArtifact) => ({
+          ...draftArtifact,
+          content: streamPart.data,
+          isVisible:
+            draftArtifact.status === 'streaming' &&
+            draftArtifact.content.length > 50 &&
+            draftArtifact.content.length < 60
+              ? true
+              : draftArtifact.isVisible,
+          status: 'streaming',
+        }));
+      }
+    },
+    content: ({ content, title, isLoading, status, metadata, isInline }) => {
+      if (isLoading || status === 'streaming') {
+        return <MermaidStreamingLoader isInline={isInline} />;
+      }
+
+      return (
+        <MermaidRenderer
+          diagram={content}
+          title={title}
+          description={metadata?.description}
+          type={metadata?.type as any}
+          isInline={isInline}
+        />
+      );
+    },
+    actions: [
+      {
+        icon: <UndoIcon size={18} />,
+        description: 'View Previous version',
+        onClick: ({ handleVersionChange }) => {
+          handleVersionChange('prev');
+        },
+        isDisabled: ({ currentVersionIndex }) => {
+          return currentVersionIndex === 0;
+        },
+      },
+      {
+        icon: <RedoIcon size={18} />,
+        description: 'View Next version',
+        onClick: ({ handleVersionChange }) => {
+          handleVersionChange('next');
+        },
+        isDisabled: ({ isCurrentVersion }) => {
+          return isCurrentVersion;
+        },
+      },
+      {
+        icon: <CopyIcon size={18} />,
+        description: 'Copy diagram code',
+        onClick: ({ content }) => {
+          navigator.clipboard.writeText(content);
+          toast.success('Diagram code copied to clipboard!');
+        },
+      },
+      {
+        icon: <DownloadIcon size={18} />,
+        description: 'Download diagram code (.mmd)',
+        onClick: ({ content, metadata }) => {
+          const blob = new Blob([content], { type: 'text/plain' });
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement('a');
+          a.href = url;
+          a.download = 'diagram.mmd';
+          document.body.appendChild(a);
+          a.click();
+          document.body.removeChild(a);
+          URL.revokeObjectURL(url);
+          toast.success('Diagram code downloaded!');
+        },
+      },
+      {
+        icon: <FileImage size={18} />,
+        description: 'Download as SVG',
+        onClick: ({ content, metadata }) => {
+          // We need to render the mermaid content to SVG first
+          import('mermaid').then((mermaid) => {
+            mermaid.default.initialize({
+              startOnLoad: false,
+              theme: 'default',
+              securityLevel: 'loose',
+              fontFamily: 'arial',
+            });
+
+            const diagramId = `mermaid-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+
+            mermaid.default
+              .render(diagramId, content)
+              .then(({ svg }) => {
+                const blob = new Blob([svg], { type: 'image/svg+xml' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = 'diagram.svg';
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                URL.revokeObjectURL(url);
+                toast.success('Diagram SVG downloaded!');
+              })
+              .catch((error) => {
+                console.error('Error rendering SVG:', error);
+                toast.error('Failed to render diagram as SVG');
+              });
+          });
+        },
+      },
+      {
+        icon: <DownloadIcon size={18} />,
+        description: 'Download as PNG',
+        onClick: ({ content, metadata }) => {
+          // We need to render the mermaid content to SVG first, then convert to PNG
+          import('mermaid').then((mermaid) => {
+            mermaid.default.initialize({
+              startOnLoad: false,
+              theme: 'default',
+              securityLevel: 'loose',
+              fontFamily: 'arial',
+            });
+
+            const diagramId = `mermaid-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+
+            mermaid.default
+              .render(diagramId, content)
+              .then(({ svg }) => {
+                // Convert SVG to PNG
+                const img = new Image();
+                img.crossOrigin = 'anonymous';
+                const svgDataUrl = `data:image/svg+xml;base64,${btoa(unescape(encodeURIComponent(svg)))}`;
+
+                img.onload = () => {
+                  const canvas = document.createElement('canvas');
+                  const ctx = canvas.getContext('2d');
+
+                  if (!ctx) {
+                    toast.error('Canvas not supported');
+                    return;
+                  }
+
+                  canvas.width = img.naturalWidth || img.width;
+                  canvas.height = img.naturalHeight || img.height;
+
+                  ctx.fillStyle = 'white';
+                  ctx.fillRect(0, 0, canvas.width, canvas.height);
+                  ctx.drawImage(img, 0, 0);
+
+                  canvas.toBlob((blob) => {
+                    if (blob) {
+                      const url = URL.createObjectURL(blob);
+                      const a = document.createElement('a');
+                      a.href = url;
+                      a.download = 'diagram.png';
+                      document.body.appendChild(a);
+                      a.click();
+                      document.body.removeChild(a);
+                      URL.revokeObjectURL(url);
+                      toast.success('Diagram PNG downloaded!');
+                    } else {
+                      toast.error('Failed to create PNG');
+                    }
+                  }, 'image/png');
+
+                  // No cleanup needed for data URL
+                };
+
+                img.onerror = () => {
+                  toast.error('Failed to load SVG for PNG conversion');
+                };
+
+                img.src = svgDataUrl;
+              })
+              .catch((error) => {
+                console.error('Error rendering diagram:', error);
+                toast.error('Failed to render diagram');
+              });
+          });
+        },
+      },
+    ],
+    toolbar: [
+      {
+        icon: <RotateCcw />,
+        description: 'Regenerate diagram',
+        onClick: ({ sendMessage }) => {
+          sendMessage({
+            role: 'user',
+            parts: [
+              {
+                type: 'text',
+                text: 'Please regenerate this diagram with improvements.',
+              },
+            ],
+          });
+        },
+      },
+    ],
   },
-  onStreamPart: ({ streamPart, setMetadata, setArtifact }) => {
-    if (streamPart.type === 'mermaid-type') {
-      setMetadata((metadata) => ({
-        ...metadata,
-        type: streamPart.content as string,
-      }));
-    }
-
-    if (streamPart.type === 'mermaid-description') {
-      setMetadata((metadata) => ({
-        ...metadata,
-        description: streamPart.content as string,
-      }));
-    }
-
-    if (streamPart.type === 'mermaid-delta') {
-      setArtifact((draftArtifact) => ({
-        ...draftArtifact,
-        content: streamPart.content as string,
-        isVisible:
-          draftArtifact.status === 'streaming' &&
-          draftArtifact.content.length > 50 &&
-          draftArtifact.content.length < 60
-            ? true
-            : draftArtifact.isVisible,
-        status: 'streaming',
-      }));
-    }
-  },
-  content: ({
-    content,
-    title,
-    isLoading,
-    status,
-    metadata,
-    isInline,
-  }) => {
-    if (isLoading || status === 'streaming') {
-      return <MermaidStreamingLoader isInline={isInline} />;
-    }
-
-    return (
-      <MermaidRenderer
-        diagram={content}
-        title={title}
-        description={metadata?.description}
-        type={metadata?.type as any}
-        isInline={isInline}
-      />
-    );
-  },
-  actions: [
-    {
-      icon: <UndoIcon size={18} />,
-      description: 'View Previous version',
-      onClick: ({ handleVersionChange }) => {
-        handleVersionChange('prev');
-      },
-      isDisabled: ({ currentVersionIndex }) => {
-        return currentVersionIndex === 0;
-      },
-    },
-    {
-      icon: <RedoIcon size={18} />,
-      description: 'View Next version',
-      onClick: ({ handleVersionChange }) => {
-        handleVersionChange('next');
-      },
-      isDisabled: ({ isCurrentVersion }) => {
-        return isCurrentVersion;
-      },
-    },
-    {
-      icon: <CopyIcon size={18} />,
-      description: 'Copy diagram code',
-      onClick: ({ content }) => {
-        navigator.clipboard.writeText(content);
-        toast.success('Diagram code copied to clipboard!');
-      },
-    },
-    {
-      icon: <DownloadIcon size={18} />,
-      description: 'Download diagram code (.mmd)',
-      onClick: ({ content, metadata }) => {
-        const blob = new Blob([content], { type: 'text/plain' });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = 'diagram.mmd';
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-        URL.revokeObjectURL(url);
-        toast.success('Diagram code downloaded!');
-      },
-    },
-    {
-      icon: <FileImage size={18} />,
-      description: 'Download as SVG',
-      onClick: ({ content, metadata }) => {
-        // We need to render the mermaid content to SVG first
-        import('mermaid').then((mermaid) => {
-          mermaid.default.initialize({
-            startOnLoad: false,
-            theme: 'default',
-            securityLevel: 'loose',
-            fontFamily: 'arial',
-          });
-
-          const diagramId = `mermaid-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
-          
-          mermaid.default.render(diagramId, content).then(({ svg }) => {
-            const blob = new Blob([svg], { type: 'image/svg+xml' });
-            const url = URL.createObjectURL(blob);
-            const a = document.createElement('a');
-            a.href = url;
-                         a.download = 'diagram.svg';
-            document.body.appendChild(a);
-            a.click();
-            document.body.removeChild(a);
-            URL.revokeObjectURL(url);
-            toast.success('Diagram SVG downloaded!');
-          }).catch((error) => {
-            console.error('Error rendering SVG:', error);
-            toast.error('Failed to render diagram as SVG');
-          });
-        });
-      },
-    },
-    {
-      icon: <DownloadIcon size={18} />,
-      description: 'Download as PNG',
-      onClick: ({ content, metadata }) => {
-        // We need to render the mermaid content to SVG first, then convert to PNG
-        import('mermaid').then((mermaid) => {
-          mermaid.default.initialize({
-            startOnLoad: false,
-            theme: 'default',
-            securityLevel: 'loose',
-            fontFamily: 'arial',
-          });
-
-          const diagramId = `mermaid-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
-          
-          mermaid.default.render(diagramId, content).then(({ svg }) => {
-            // Convert SVG to PNG
-            const img = new Image();
-            img.crossOrigin = 'anonymous';
-            const svgDataUrl = `data:image/svg+xml;base64,${btoa(unescape(encodeURIComponent(svg)))}`;
-            
-            img.onload = () => {
-              const canvas = document.createElement('canvas');
-              const ctx = canvas.getContext('2d');
-              
-              if (!ctx) {
-                toast.error('Canvas not supported');
-                return;
-              }
-              
-              canvas.width = img.naturalWidth || img.width;
-              canvas.height = img.naturalHeight || img.height;
-              
-              ctx.fillStyle = 'white';
-              ctx.fillRect(0, 0, canvas.width, canvas.height);
-              ctx.drawImage(img, 0, 0);
-              
-              canvas.toBlob((blob) => {
-                if (blob) {
-                  const url = URL.createObjectURL(blob);
-                  const a = document.createElement('a');
-                  a.href = url;
-                                     a.download = 'diagram.png';
-                  document.body.appendChild(a);
-                  a.click();
-                  document.body.removeChild(a);
-                  URL.revokeObjectURL(url);
-                  toast.success('Diagram PNG downloaded!');
-                } else {
-                  toast.error('Failed to create PNG');
-                }
-              }, 'image/png');
-              
-              // No cleanup needed for data URL
-            };
-            
-            img.onerror = () => {
-              toast.error('Failed to load SVG for PNG conversion');
-            };
-            
-            img.src = svgDataUrl;
-          }).catch((error) => {
-            console.error('Error rendering diagram:', error);
-            toast.error('Failed to render diagram');
-          });
-        });
-      },
-    },
-  ],
-  toolbar: [
-    {
-      icon: <RotateCcw />,
-      description: 'Regenerate diagram',
-      onClick: ({ appendMessage }) => {
-        appendMessage({
-          role: 'user',
-          content: 'Please regenerate this diagram with improvements.',
-        });
-      },
-    },
-  ],
-}); 
+);

@@ -1,8 +1,8 @@
 // Components
-import { useSession } from "next-auth/react";
-import { Button } from "./ui/button";
-import { Input } from "./ui/input";
-import { Label } from "./ui/label";
+import { useSession } from 'next-auth/react';
+import { Button } from './ui/button';
+import { Input } from './ui/input';
+import { Label } from './ui/label';
 import {
   Dialog,
   DialogContent,
@@ -10,18 +10,18 @@ import {
   DialogHeader,
   DialogTitle,
   DialogTrigger,
-} from "./ui/dialog";
-import { toast } from "sonner";
+} from './ui/dialog';
+import { toast } from 'sonner';
 
 // React imports
-import { useEffect, useState } from "react";
+import { useEffect, useState } from 'react';
 
 // Editor
-import Editor from "@monaco-editor/react";
+import Editor from '@monaco-editor/react';
 
 // Next.js imports
-import Link from "next/link";
-import { useTheme } from "next-themes";
+import Link from 'next/link';
+import { useTheme } from 'next-themes';
 
 // Icons
 import {
@@ -38,16 +38,16 @@ import {
   Trash2,
   Boxes,
   Plus,
-} from "lucide-react";
+} from 'lucide-react';
 
 // Utils
-import { guestRegex } from "@/lib/constants";
+import { guestRegex } from '@/lib/constants';
 
 // Hooks
-import { useMcpClient } from "@/hooks/use-mcp-client";
+import { useMcpClient } from '@/hooks/use-mcp-client';
 
 // Server queries (only for config dialog)
-import { getMcpServers, saveMcpServers } from "@/lib/mcp/queries";
+import { getMcpServers, saveMcpServers } from '@/lib/mcp/queries';
 
 type MCPHubContentProps = {
   setIsMCPHubOpen: (isOpen: boolean) => void;
@@ -56,8 +56,8 @@ type MCPHubContentProps = {
 const MCPHubContent = ({ setIsMCPHubOpen }: MCPHubContentProps) => {
   const { data } = useSession();
   const { theme } = useTheme();
-  const isGuest = guestRegex.test(data?.user?.email ?? "");
-  
+  const isGuest = guestRegex.test(data?.user?.email ?? '');
+
   // MCP Client Hook
   const {
     servers: mcpServers,
@@ -68,12 +68,12 @@ const MCPHubContent = ({ setIsMCPHubOpen }: MCPHubContentProps) => {
     toggleServerDisabled,
     restartServer: restartServerHook,
     deleteServer,
-    addStdioServer
-  } = useMcpClient(data?.user?.id ?? "");
+    addStdioServer,
+  } = useMcpClient(data?.user?.id ?? '');
 
   // State for form inputs
-  const [serverName, setServerName] = useState("");
-  const [serverUrl, setServerUrl] = useState("");
+  const [serverName, setServerName] = useState('');
+  const [serverUrl, setServerUrl] = useState('');
   const [expandedServers, setExpandedServers] = useState<
     Record<string, boolean>
   >({});
@@ -81,29 +81,33 @@ const MCPHubContent = ({ setIsMCPHubOpen }: MCPHubContentProps) => {
     Record<string, boolean>
   >({});
   const [isConfigDialogOpen, setIsConfigDialogOpen] = useState(false);
-  const [editableConfig, setEditableConfig] = useState("");
+  const [editableConfig, setEditableConfig] = useState('');
   const [isSaving, setIsSaving] = useState(false);
-  const [jsonError, setJsonError] = useState("");
+  const [jsonError, setJsonError] = useState('');
 
   // Local loading states for individual operations
   const [isAddingServer, setIsAddingServer] = useState(false);
-  const [togglingServers, setTogglingServers] = useState<Record<string, boolean>>({});
-  const [deletingServers, setDeletingServers] = useState<Record<string, boolean>>({});
+  const [togglingServers, setTogglingServers] = useState<
+    Record<string, boolean>
+  >({});
+  const [deletingServers, setDeletingServers] = useState<
+    Record<string, boolean>
+  >({});
 
   const toggleServer = async (serverName: string, disabled: boolean) => {
-    const action = !disabled ? "disabled" : "enabled";
+    const action = !disabled ? 'disabled' : 'enabled';
     toast.info(`MCP server "${serverName}" is being ${action}`);
-    
-    setTogglingServers(prev => ({ ...prev, [serverName]: true }));
-    
+
+    setTogglingServers((prev) => ({ ...prev, [serverName]: true }));
+
     try {
       await toggleServerDisabled(serverName, !disabled);
       toast.success(`MCP server "${serverName}" was successfully ${action}`);
     } catch (error: any) {
-      console.error("Error toggling server:", error);
-      toast.error("Error toggling server: " + error.message);
+      console.error('Error toggling server:', error);
+      toast.error(`Error toggling server: ${error.message}`);
     } finally {
-      setTogglingServers(prev => ({ ...prev, [serverName]: false }));
+      setTogglingServers((prev) => ({ ...prev, [serverName]: false }));
     }
   };
 
@@ -116,18 +120,20 @@ const MCPHubContent = ({ setIsMCPHubOpen }: MCPHubContentProps) => {
 
   const addServer = async () => {
     if (!serverName || !serverUrl) return;
-    
-    toast.info(`Adding MCP server "${serverName}". This may take a few seconds...`);
+
+    toast.info(
+      `Adding MCP server "${serverName}". This may take a few seconds...`,
+    );
     setIsAddingServer(true);
-    
+
     try {
       await addRemoteServer(serverName, serverUrl);
-      setServerName("");
-      setServerUrl("");
-      toast.success("MCP server added successfully");
+      setServerName('');
+      setServerUrl('');
+      toast.success('MCP server added successfully');
     } catch (error: any) {
-      console.error("Error adding remote MCP server:", error);
-      toast.error("Error adding remote MCP server: " + error.message);
+      console.error('Error adding remote MCP server:', error);
+      toast.error(`Error adding remote MCP server: ${error.message}`);
     } finally {
       setIsAddingServer(false);
     }
@@ -146,8 +152,8 @@ const MCPHubContent = ({ setIsMCPHubOpen }: MCPHubContentProps) => {
       console.error(`Error restarting server ${serverName}:`, error);
       toast.error(
         `Error restarting server "${serverName}": ${
-          error.message || "Unknown error"
-        }`
+          error.message || 'Unknown error'
+        }`,
       );
     } finally {
       // Stop rotation after operation completes
@@ -158,24 +164,26 @@ const MCPHubContent = ({ setIsMCPHubOpen }: MCPHubContentProps) => {
   };
 
   const deleteServerHandler = async (serverName: string) => {
-    toast.info(`Deleting MCP server "${serverName}". This may take a few seconds...`);
-    setDeletingServers(prev => ({ ...prev, [serverName]: true }));
-    
+    toast.info(
+      `Deleting MCP server "${serverName}". This may take a few seconds...`,
+    );
+    setDeletingServers((prev) => ({ ...prev, [serverName]: true }));
+
     try {
       await deleteServer(serverName);
       toast.success(`MCP server "${serverName}" was successfully deleted`);
     } catch (error: any) {
-      console.error("Error deleting server:", error);
-      toast.error("Error deleting server: " + error.message);
+      console.error('Error deleting server:', error);
+      toast.error(`Error deleting server: ${error.message}`);
     } finally {
-      setDeletingServers(prev => ({ ...prev, [serverName]: false }));
+      setDeletingServers((prev) => ({ ...prev, [serverName]: false }));
     }
   };
 
   const saveConfigChanges = async () => {
-    toast.info("Saving MCP server list. This may take a few seconds...");
+    toast.info('Saving MCP server list. This may take a few seconds...');
     setIsSaving(true);
-    setJsonError("");
+    setJsonError('');
 
     try {
       // Validate JSON format
@@ -187,24 +195,24 @@ const MCPHubContent = ({ setIsMCPHubOpen }: MCPHubContentProps) => {
       }
 
       // Save the config to Firebase
-      await saveMcpServers(data?.user?.id ?? "", parsedConfig);
+      await saveMcpServers(data?.user?.id ?? '', parsedConfig);
 
       // Call the addStdioServer hook to add the stdio server and actually connect to it
       await addStdioServer();
 
       // Show success toast
-      toast.success("MCP server list updated successfully");
+      toast.success('MCP server list updated successfully');
 
       // Close dialog on successful save
       setIsConfigDialogOpen(false);
       await getServers(); // Refresh servers list
     } catch (error) {
-      toast.error("Error saving MCP server list. Please try again.");
+      toast.error('Error saving MCP server list. Please try again.');
       if (error instanceof SyntaxError) {
-        setJsonError("Invalid JSON format. Please check your syntax.");
+        setJsonError('Invalid JSON format. Please check your syntax.');
       } else {
-        setJsonError("Error saving configuration. Please try again.");
-        console.error("Error saving config:", error);
+        setJsonError('Error saving configuration. Please try again.');
+        console.error('Error saving config:', error);
       }
     } finally {
       setIsSaving(false);
@@ -214,7 +222,7 @@ const MCPHubContent = ({ setIsMCPHubOpen }: MCPHubContentProps) => {
   const openConfigDialog = async () => {
     const mcpServersConfig = await getFirebaseConfigMcpServers();
     setEditableConfig(JSON.stringify(mcpServersConfig, null, 2));
-    setJsonError(""); // Clear any previous errors
+    setJsonError(''); // Clear any previous errors
     setIsConfigDialogOpen(true);
   };
 
@@ -222,8 +230,8 @@ const MCPHubContent = ({ setIsMCPHubOpen }: MCPHubContentProps) => {
    * Get the MCP servers config from Firebase and set the state
    */
   const getFirebaseConfigMcpServers = async () => {
-    console.log("Getting MCP servers from Firebase");
-    const mcpServersConfig = await getMcpServers(data?.user?.id ?? "");
+    console.log('Getting MCP servers from Firebase');
+    const mcpServersConfig = await getMcpServers(data?.user?.id ?? '');
     return mcpServersConfig;
   };
 
@@ -256,7 +264,7 @@ const MCPHubContent = ({ setIsMCPHubOpen }: MCPHubContentProps) => {
                     </span>
                   )}
                   <span className="bg-blue-100 text-blue-800 px-1.5 py-0.5 rounded text-[10px] font-medium">
-                    {paramInfo.type || "any"}
+                    {paramInfo.type || 'any'}
                   </span>
                 </div>
                 {paramInfo.description && (
@@ -265,7 +273,7 @@ const MCPHubContent = ({ setIsMCPHubOpen }: MCPHubContentProps) => {
                   </p>
                 )}
               </div>
-            )
+            ),
           )}
         </div>
       </div>
@@ -308,7 +316,9 @@ const MCPHubContent = ({ setIsMCPHubOpen }: MCPHubContentProps) => {
         <div className="flex-1 p-4 flex items-center justify-center">
           <div className="text-center space-y-2">
             <RefreshCw className="size-8 mx-auto animate-spin text-muted-foreground" />
-            <p className="text-sm text-muted-foreground">Loading MCP servers...</p>
+            <p className="text-sm text-muted-foreground">
+              Loading MCP servers...
+            </p>
           </div>
         </div>
       </div>
@@ -422,10 +432,10 @@ const MCPHubContent = ({ setIsMCPHubOpen }: MCPHubContentProps) => {
                     addServer();
                   }}
                   className="w-full"
-                  style={{ marginTop: "1.5rem" }}
+                  style={{ marginTop: '1.5rem' }}
                   disabled={!serverName || !serverUrl || isAddingServer}
                 >
-                  {isAddingServer ? "Adding Server..." : "Add Server"}
+                  {isAddingServer ? 'Adding Server...' : 'Add Server'}
                 </Button>
               </div>
             </div>
@@ -474,12 +484,12 @@ const MCPHubContent = ({ setIsMCPHubOpen }: MCPHubContentProps) => {
                       height="100%"
                       defaultLanguage="json"
                       value={editableConfig}
-                      onChange={(value) => setEditableConfig(value || "")}
-                      theme={theme === "dark" ? "vs-dark" : "light"}
+                      onChange={(value) => setEditableConfig(value || '')}
+                      theme={theme === 'dark' ? 'vs-dark' : 'light'}
                       options={{
                         minimap: { enabled: false },
                         scrollBeyondLastLine: false,
-                        wordWrap: "on",
+                        wordWrap: 'on',
                         fontSize: 13,
                       }}
                     />
@@ -502,7 +512,7 @@ const MCPHubContent = ({ setIsMCPHubOpen }: MCPHubContentProps) => {
                     onClick={saveConfigChanges}
                     disabled={isSaving || !!jsonError}
                   >
-                    {isSaving ? "Saving..." : "Save Changes"}
+                    {isSaving ? 'Saving...' : 'Save Changes'}
                   </Button>
                 </div>
               </DialogContent>
@@ -516,6 +526,7 @@ const MCPHubContent = ({ setIsMCPHubOpen }: MCPHubContentProps) => {
                     <div className="flex items-center justify-between p-3">
                       <div className="flex items-center gap-3">
                         <button
+                          type="button"
                           onClick={(e) => {
                             e.preventDefault();
                             toggleExpanded(server.name);
@@ -534,11 +545,11 @@ const MCPHubContent = ({ setIsMCPHubOpen }: MCPHubContentProps) => {
                           </span>
                           <div
                             className={`size-2 rounded-full ${
-                              server.status === "connected"
-                                ? "bg-green-500"
-                                : server.status === "connecting"
-                                ? "bg-yellow-500"
-                                : "bg-red-500"
+                              server.status === 'connected'
+                                ? 'bg-green-500'
+                                : server.status === 'connecting'
+                                  ? 'bg-yellow-500'
+                                  : 'bg-red-500'
                             }`}
                             title={server.status}
                           />
@@ -547,6 +558,7 @@ const MCPHubContent = ({ setIsMCPHubOpen }: MCPHubContentProps) => {
 
                       <div className="flex items-center gap-2">
                         <button
+                          type="button"
                           className="p-1 hover:bg-muted rounded disabled:opacity-50"
                           onClick={(e) => {
                             e.preventDefault();
@@ -557,26 +569,27 @@ const MCPHubContent = ({ setIsMCPHubOpen }: MCPHubContentProps) => {
                           <RefreshCw
                             className={`size-4 transition-transform duration-300 ${
                               restartingServers[server.name]
-                                ? "animate-spin"
-                                : ""
+                                ? 'animate-spin'
+                                : ''
                             }`}
                           />
                         </button>
                         <button
+                          type="button"
                           onClick={(e) => {
                             e.preventDefault();
                             toggleServer(server.name, server.disabled ?? false);
                           }}
                           disabled={togglingServers[server.name]}
                           className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors disabled:opacity-50 ${
-                            !server.disabled ? "bg-green-500" : "bg-gray-300"
+                            !server.disabled ? 'bg-green-500' : 'bg-gray-300'
                           }`}
                         >
                           <span
                             className={`inline-block size-3 rounded-full bg-white transition-transform ${
                               !server.disabled
-                                ? "translate-x-5"
-                                : "translate-x-1"
+                                ? 'translate-x-5'
+                                : 'translate-x-1'
                             }`}
                           />
                         </button>
@@ -592,7 +605,7 @@ const MCPHubContent = ({ setIsMCPHubOpen }: MCPHubContentProps) => {
                             <div className="space-y-4">
                               {server.tools.map((tool, index) => (
                                 <div
-                                  key={index}
+                                  key={`${tool.name}-${index}`}
                                   className="bg-background rounded-lg border p-4"
                                 >
                                   <div className="space-y-3">
@@ -644,18 +657,20 @@ const MCPHubContent = ({ setIsMCPHubOpen }: MCPHubContentProps) => {
                                 e.preventDefault();
                                 restartServer(server.name);
                               }}
-                              disabled={restartingServers[server.name] || isLoading}
+                              disabled={
+                                restartingServers[server.name] || isLoading
+                              }
                             >
                               <RotateCcw
                                 className={`size-4 mr-2 transition-transform duration-500 ${
                                   restartingServers[server.name]
-                                    ? "animate-spin"
-                                    : ""
+                                    ? 'animate-spin'
+                                    : ''
                                 }`}
                               />
                               {restartingServers[server.name]
-                                ? "Restarting..."
-                                : "Restart Server"}
+                                ? 'Restarting...'
+                                : 'Restart Server'}
                             </Button>
                             <Button
                               variant="destructive"
@@ -667,10 +682,9 @@ const MCPHubContent = ({ setIsMCPHubOpen }: MCPHubContentProps) => {
                               disabled={deletingServers[server.name]}
                             >
                               <Trash2 className="size-4 mr-2" />
-                              {deletingServers[server.name] 
-                                ? "Deleting..." 
-                                : "Delete Server"
-                              }
+                              {deletingServers[server.name]
+                                ? 'Deleting...'
+                                : 'Delete Server'}
                             </Button>
                           </div>
                         </div>

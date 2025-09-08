@@ -1,4 +1,4 @@
-import { expect, Page } from '@playwright/test';
+import { expect, type Page } from '@playwright/test';
 
 export class ArtifactPage {
   constructor(private page: Page) {}
@@ -59,7 +59,7 @@ export class ArtifactPage {
     return {
       element: lastMessageElement,
       content,
-      reasoning: reasoningElement,
+      reasoningText: reasoningElement,
       async toggleReasoningVisibility() {
         await lastMessageElement
           .getByTestId('message-reasoning-toggle')

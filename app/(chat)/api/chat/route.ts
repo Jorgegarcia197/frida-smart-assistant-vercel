@@ -1,35 +1,33 @@
 import {
-  appendClientMessage,
-  appendResponseMessages,
-  createDataStream,
   smoothStream,
   streamText,
+  stepCountIs,
+  createUIMessageStream,
+  convertToModelMessages,
+  JsonToSseTransformStream,
+  dynamicTool,
 } from 'ai';
-import { auth, type UserType } from '@/app/(auth)/auth';
+import { auth } from '@/app/(auth)/auth';
 import { type RequestHints, systemPrompt } from '@/lib/ai/prompts';
 import {
   createStreamId,
   deleteChatById,
   getChatById,
-  getMessageCountByUserId,
   getMessagesByChatId,
   getStreamIdsByChatId,
   saveChat,
   saveMessages,
 } from '@/lib/db/queries';
-import { generateUUID, getTrailingMessageId } from '@/lib/utils';
+import { convertToUIMessages, generateUUID } from '@/lib/utils';
 import { generateTitleFromUserMessage } from '../../actions';
 import { createDocument } from '@/lib/ai/tools/create-document';
 import { updateDocument } from '@/lib/ai/tools/update-document';
 import { requestSuggestions } from '@/lib/ai/tools/request-suggestions';
 import { getWeather } from '@/lib/ai/tools/get-weather';
 import { createMermaidDiagram } from '@/lib/ai/tools/create-mermaid-diagram';
-import { isProductionEnvironment } from '@/lib/constants';
 import { myProvider } from '@/lib/ai/providers';
-import { entitlementsByUserType } from '@/lib/ai/entitlements';
 import { getMcpClientInstance } from '@/lib/mcp/mcp-singleton-instance';
-import { tool } from 'ai';
-import { z } from 'zod';
+import { z } from 'zod/v3';
 import { postRequestBodySchema, type PostRequestBody } from './schema';
 import { geolocation } from '@vercel/functions';
 import {
@@ -40,6 +38,7 @@ import { after } from 'next/server';
 import type { Chat } from '@/lib/db/firebase-types';
 import { differenceInSeconds } from 'date-fns';
 import { ChatSDKError } from '@/lib/errors';
+import type { ChatMessage } from '@/lib/types';
 
 export const maxDuration = 60;
 
@@ -75,21 +74,23 @@ function jsonSchemaToZodObject(jsonSchema: any): z.ZodObject<any> {
 
   if (properties && typeof properties === 'object') {
     const zodFields: Record<string, z.ZodTypeAny> = {};
-    
+
     for (const [key, value] of Object.entries(properties)) {
       let fieldSchema = jsonSchemaPropertyToZod(value as any);
-      
+
       // Handle optional fields
       if (!required.includes(key)) {
         fieldSchema = fieldSchema.optional();
       }
-      
+
       zodFields[key] = fieldSchema;
     }
-    
-    return Object.keys(zodFields).length > 0 ? z.object(zodFields) : z.object({});
+
+    return Object.keys(zodFields).length > 0
+      ? z.object(zodFields)
+      : z.object({});
   }
-  
+
   return z.object({});
 }
 
@@ -130,7 +131,7 @@ async function getMcpToolsForAI(userId: string) {
   try {
     console.log('🔧 Getting MCP client instance for user:', userId);
     const mcpClient = getMcpClientInstance(userId);
-    
+
     if (!mcpClient || mcpClient.isConnecting) {
       console.log('⏳ MCP client not ready or still connecting');
       return { mcpTools, mcpActiveTools };
@@ -152,13 +153,28 @@ async function getMcpToolsForAI(userId: string) {
 
     // Get all connected and enabled servers
     const servers = mcpClient.getServers();
-    console.log('🔧 All MCP servers:', servers.map(s => ({ name: s.name, status: s.status, disabled: s.disabled, hasTools: !!s.tools })));
-    
-    const enabledServers = servers.filter(
-      server => !server.disabled && server.status === 'connected' && server.tools && server.tools.length > 0
+    console.log(
+      '🔧 All MCP servers:',
+      servers.map((s) => ({
+        name: s.name,
+        status: s.status,
+        disabled: s.disabled,
+        hasTools: !!s.tools,
+      })),
     );
 
-    console.log('🔧 Available MCP servers:', enabledServers.map(s => s.name));
+    const enabledServers = servers.filter(
+      (server) =>
+        !server.disabled &&
+        server.status === 'connected' &&
+        server.tools &&
+        server.tools.length > 0,
+    );
+
+    console.log(
+      '🔧 Available MCP servers:',
+      enabledServers.map((s) => s.name),
+    );
 
     for (const server of enabledServers) {
       if (!server.tools) continue;
@@ -166,42 +182,53 @@ async function getMcpToolsForAI(userId: string) {
       for (const mcpTool of server.tools) {
         // Create a unique tool name with server prefix
         const toolName = `${server.name}__${mcpTool.name}`;
-        
+
         // Convert JSON Schema to Zod schema for parameters
         let parametersSchema: z.ZodTypeAny = z.object({});
-        
+
         if (mcpTool.inputSchema) {
           try {
             parametersSchema = jsonSchemaToZodObject(mcpTool.inputSchema);
           } catch (error) {
-            console.warn(`Failed to convert JSON schema to Zod for tool ${toolName}:`, error);
+            console.warn(
+              `Failed to convert JSON schema to Zod for tool ${toolName}:`,
+              error,
+            );
             parametersSchema = z.object({});
           }
         }
 
-        mcpTools[toolName] = tool({
-          description: mcpTool.description || `MCP tool: ${mcpTool.name} from ${server.name}`,
-          parameters: parametersSchema,
+        mcpTools[toolName] = dynamicTool({
+          description:
+            mcpTool.description ||
+            `MCP tool: ${mcpTool.name} from ${server.name}`,
+          inputSchema: parametersSchema,
           execute: async (args: any) => {
             console.log(`🛠️ Executing MCP tool: ${toolName} with args:`, args);
             try {
-              const result = await mcpClient.callTool(server.name, mcpTool.name, args);
+              const result = await mcpClient.callTool(
+                server.name,
+                mcpTool.name,
+                args,
+              );
               console.log(`✅ MCP tool result for ${toolName}:`, result);
               return result;
             } catch (error) {
-              console.error(`❌ MCP tool execution failed for ${toolName}:`, error);
+              console.error(
+                `❌ MCP tool execution failed for ${toolName}:`,
+                error,
+              );
               throw error;
             }
-          }
+          },
         });
-        
+
         mcpActiveTools.push(toolName);
       }
     }
 
     console.log('🔧 MCP tools ready:', mcpActiveTools);
     return { mcpTools, mcpActiveTools };
-
   } catch (error) {
     console.error('❌ Failed to initialize MCP tools:', error);
     return { mcpTools, mcpActiveTools };
@@ -214,45 +241,33 @@ export async function POST(request: Request) {
 
   try {
     const json = await request.json();
-    console.log('📝 Request JSON parsed:', {
-      hasId: !!json.id,
-      hasMessage: !!json.message,
-      messageType: json.message?.role,
-      selectedChatModel: json.selectedChatModel,
-      selectedVisibilityType: json.selectedVisibilityType
-    });
     requestBody = postRequestBodySchema.parse(json);
-    console.log('✅ Request body validation passed');
   } catch (error) {
     console.error('❌ Request parsing/validation failed:', error);
-    
+
     // Check if it's a character limit error
     if (error instanceof Error && error.message.includes('too_big')) {
-      return new ChatSDKError('bad_request:api', 'Your message is too long. Please keep it under 100,000 characters.').toResponse();
+      return new ChatSDKError(
+        'bad_request:api',
+        'Your message is too long. Please keep it under 100,000 characters.',
+      ).toResponse();
     }
-    
+
     return new ChatSDKError('bad_request:api').toResponse();
   }
 
   try {
     const { id, message, selectedChatModel, selectedVisibilityType } =
       requestBody;
-    console.log('📋 Extracted request data:', { id, messageRole: message.role, selectedChatModel, selectedVisibilityType });
 
     const session = await auth();
-    console.log('🔐 Session check:', { hasSession: !!session, hasUser: !!session?.user, userId: session?.user?.id });
-
     if (!session?.user) {
       console.error('❌ No session or user found');
       return new ChatSDKError('unauthorized:chat').toResponse();
     }
 
-    const userType: UserType = session.user.type;
-    console.log('👤 User type:', userType);
-
     const chat = await getChatById({ id });
-    console.log('💬 Chat lookup:', { chatExists: !!chat, chatId: id });
-    
+
     if (!chat) {
       console.log('📝 Creating new chat');
       const title = await generateTitleFromUserMessage({
@@ -274,13 +289,8 @@ export async function POST(request: Request) {
       }
     }
 
-    const previousMessages = await getMessagesByChatId({ id });
-
-    const messages = appendClientMessage({
-      // @ts-expect-error: todo add type conversion from DBMessage[] to UIMessage[]
-      messages: previousMessages,
-      message,
-    });
+    const messagesFromDb = await getMessagesByChatId({ id });
+    const uiMessages = [...convertToUIMessages(messagesFromDb), message];
 
     const { longitude, latitude, city, country } = geolocation(request);
 
@@ -298,7 +308,7 @@ export async function POST(request: Request) {
           id: message.id,
           role: 'user',
           parts: message.parts,
-          attachments: message.experimental_attachments ?? [],
+          attachments: [],
           createdAt: new Date(),
         },
       ],
@@ -307,41 +317,31 @@ export async function POST(request: Request) {
     const streamId = generateUUID();
     await createStreamId({ streamId, chatId: id });
 
-    // Check if user has sent a PDF
-    const messagesHavePDF = messages.some(message =>
-      message.experimental_attachments?.some(
-        a => a.contentType === 'application/pdf',
-      ),
+    // Get MCP tools for this user
+    const { mcpTools, mcpActiveTools } = await getMcpToolsForAI(
+      session.user.id,
     );
 
-    // Get MCP tools for this user
-    const { mcpTools, mcpActiveTools } = await getMcpToolsForAI(session.user.id);
-
-    console.log('🌊 Creating data stream with streamId:', streamId);
-    const stream = createDataStream({
-      execute: (dataStream) => {
-        // Combine built-in tools with MCP tools
-        const builtInActiveTools = [
-          'getWeather',
-          'createDocument', 
-          'updateDocument',
-          'requestSuggestions',
-          'createMermaidDiagram'
-        ];
-        const allActiveTools = [...builtInActiveTools, ...mcpActiveTools];
-        
-        console.log('🔄 Executing stream with tools:', allActiveTools);
+    const stream = createUIMessageStream({
+      execute: ({ writer: dataStream }) => {
         const result = streamText({
           model: myProvider.languageModel(selectedChatModel),
           system: systemPrompt({ selectedChatModel, requestHints }),
-          messages,
-          maxSteps: 5,
+          messages: convertToModelMessages(uiMessages),
+          stopWhen: stepCountIs(5),
+
           experimental_activeTools:
             selectedChatModel === 'chat-model-reasoning'
               ? []
-              : allActiveTools as any, // MCP tools are added dynamically, so we need to cast
+              : ([
+                  'getWeather',
+                  'createDocument',
+                  'updateDocument',
+                  'requestSuggestions',
+                  'createMermaidDiagram',
+                  ...mcpActiveTools,
+                ] as any),
           experimental_transform: smoothStream({ chunking: 'word' }),
-          experimental_generateMessageId: generateUUID,
           tools: {
             getWeather,
             createDocument: createDocument({ session, dataStream }),
@@ -353,56 +353,30 @@ export async function POST(request: Request) {
             createMermaidDiagram: createMermaidDiagram({ session, dataStream }),
             ...mcpTools,
           },
-          onFinish: async ({ response }) => {
-            if (session.user?.id) {
-              try {
-                const assistantId = getTrailingMessageId({
-                  messages: response.messages.filter(
-                    (message) => message.role === 'assistant',
-                  ),
-                });
-
-                if (!assistantId) {
-                  throw new Error('No assistant message found!');
-                }
-
-                const [, assistantMessage] = appendResponseMessages({
-                  messages: [message],
-                  responseMessages: response.messages,
-                });
-
-                await saveMessages({
-                  messages: [
-                    {
-                      id: assistantId,
-                      chatId: id,
-                      role: assistantMessage.role,
-                      parts: assistantMessage.parts,
-                      attachments:
-                        assistantMessage.experimental_attachments ?? [],
-                      createdAt: new Date(),
-                    },
-                  ],
-                });
-              } catch (_) {
-                console.error('Failed to save chat');
-              }
-            }
-          },
-          experimental_telemetry: {
-            isEnabled: isProductionEnvironment,
-            functionId: 'stream-text',
-          },
         });
 
         result.consumeStream();
 
-        result.mergeIntoDataStream(dataStream, {
-          sendReasoning: true,
+        dataStream.merge(
+          result.toUIMessageStream({
+            sendReasoning: true,
+          }),
+        );
+      },
+      generateId: generateUUID,
+      onFinish: async ({ messages }) => {
+        await saveMessages({
+          messages: messages.map((message) => ({
+            id: message.id,
+            role: message.role,
+            parts: message.parts,
+            createdAt: new Date(),
+            attachments: [],
+            chatId: id,
+          })),
         });
       },
-      onError: (error) => {
-        console.error('DataStream error occurred:', error);
+      onError: () => {
         return 'Oops, an error occurred!';
       },
     });
@@ -411,10 +385,12 @@ export async function POST(request: Request) {
 
     if (streamContext) {
       return new Response(
-        await streamContext.resumableStream(streamId, () => stream),
+        await streamContext.resumableStream(streamId, () =>
+          stream.pipeThrough(new JsonToSseTransformStream()),
+        ),
       );
     } else {
-      return new Response(stream);
+      return new Response(stream.pipeThrough(new JsonToSseTransformStream()));
     }
   } catch (error) {
     if (error instanceof ChatSDKError) {
@@ -422,7 +398,10 @@ export async function POST(request: Request) {
       return error.toResponse();
     }
     console.error('❌ Unexpected error in chat route:', error);
-    return new ChatSDKError('bad_request:chat', 'An unexpected error occurred').toResponse();
+    return new ChatSDKError(
+      'bad_request:chat',
+      'An unexpected error occurred',
+    ).toResponse();
   }
 }
 
@@ -475,13 +454,12 @@ export async function GET(request: Request) {
     return new ChatSDKError('not_found:stream').toResponse();
   }
 
-  const emptyDataStream = createDataStream({
+  const emptyDataStream = createUIMessageStream<ChatMessage>({
     execute: () => {},
   });
 
-  const stream = await streamContext.resumableStream(
-    recentStreamId.id,
-    () => emptyDataStream,
+  const stream = await streamContext.resumableStream(recentStreamId, () =>
+    emptyDataStream.pipeThrough(new JsonToSseTransformStream()),
   );
 
   /*
@@ -506,11 +484,12 @@ export async function GET(request: Request) {
       return new Response(emptyDataStream, { status: 200 });
     }
 
-    const restoredStream = createDataStream({
-      execute: (buffer) => {
-        buffer.writeData({
-          type: 'append-message',
-          message: JSON.stringify(mostRecentMessage),
+    const restoredStream = createUIMessageStream<ChatMessage>({
+      execute: ({ writer }) => {
+        writer.write({
+          type: 'data-appendMessage',
+          data: JSON.stringify(mostRecentMessage),
+          transient: true,
         });
       },
     });

@@ -1,36 +1,35 @@
 // MCP imports
-import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js";
-import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
+import { Client } from '@modelcontextprotocol/sdk/client/index.js';
+import { SSEClientTransport } from '@modelcontextprotocol/sdk/client/sse.js';
+import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 
 // Deep equal
-import deepEqual from "fast-deep-equal";
+import deepEqual from 'fast-deep-equal';
 
 // Zod
-import { z } from "zod";
+import { z } from 'zod/v3';
 
 // Queries
-import { getMcpServers, saveMcpServers } from "./queries";
+import { getMcpServers, saveMcpServers } from './queries';
 
 // Types
 import {
-  McpConnection,
+  type McpConnection,
   MIN_MCP_TIMEOUT_SECONDS,
   DEFAULT_MCP_TIMEOUT_SECONDS,
-  McpTool,
-  McpResource,
-  McpResourceTemplate,
-  McpServer,
-  McpToolCallResponse,
-} from "./types";
+  type McpTool,
+  type McpResource,
+  type McpResourceTemplate,
+  type McpServer,
+} from './types';
 import {
   CallToolResultSchema,
   ListResourcesResultSchema,
   ListResourceTemplatesResultSchema,
   ListToolsResultSchema,
-  CallToolResult,
-} from "@modelcontextprotocol/sdk/types.js";
-import { secondsToMs } from "./utils";
+  type CallToolResult,
+} from '@modelcontextprotocol/sdk/types.js';
+import { secondsToMs } from './utils';
 
 // Default timeout for internal MCP data requests in milliseconds; is not the same as the user facing timeout stored as DEFAULT_MCP_TIMEOUT_SECONDS
 const DEFAULT_REQUEST_TIMEOUT_MS = 5000;
@@ -50,7 +49,7 @@ const SseConfigSchema = BaseConfigSchema.extend({
   url: z.string().url(),
 }).transform((config) => ({
   ...config,
-  transportType: "sse" as const,
+  transportType: 'sse' as const,
 }));
 
 const StdioConfigSchema = BaseConfigSchema.extend({
@@ -59,7 +58,7 @@ const StdioConfigSchema = BaseConfigSchema.extend({
   env: z.record(z.string()).optional(),
 }).transform((config) => ({
   ...config,
-  transportType: "stdio" as const,
+  transportType: 'stdio' as const,
 }));
 
 const ServerConfigSchema = z.union([StdioConfigSchema, SseConfigSchema]);
@@ -72,7 +71,7 @@ export class MCPClient {
 
   // Variables
   connections: McpConnection[] = [];
-  isConnecting: boolean = false;
+  isConnecting = false;
 
   constructor(userId: string) {
     this.userId = userId;
@@ -86,23 +85,33 @@ export class MCPClient {
       const mcpServersConfig = await getMcpServers(this.userId);
 
       console.log(
-        "[MCPClient] MCP servers config from Firebase:",
-        JSON.stringify(mcpServersConfig, null, 2)
+        '[MCPClient] MCP servers config from Firebase:',
+        JSON.stringify(mcpServersConfig, null, 2),
       );
 
-      if (mcpServersConfig && mcpServersConfig.mcpServers) {
+      if (mcpServersConfig?.mcpServers) {
         await this.updateServerConnections(mcpServersConfig.mcpServers);
-        console.log(`[MCPClient] Successfully initialized ${Object.keys(mcpServersConfig.mcpServers).length} MCP server(s) for user ${this.userId}`);
-        console.log(`[MCPClient] Current connections after init:`, this.connections.map(c => ({
-          name: c.server.name,
-          status: c.server.status,
-          disabled: c.server.disabled
-        })));
+        console.log(
+          `[MCPClient] Successfully initialized ${Object.keys(mcpServersConfig.mcpServers).length} MCP server(s) for user ${this.userId}`,
+        );
+        console.log(
+          `[MCPClient] Current connections after init:`,
+          this.connections.map((c) => ({
+            name: c.server.name,
+            status: c.server.status,
+            disabled: c.server.disabled,
+          })),
+        );
       } else {
-        console.log(`[MCPClient] No MCP servers found to initialize for user ${this.userId}`);
+        console.log(
+          `[MCPClient] No MCP servers found to initialize for user ${this.userId}`,
+        );
       }
     } catch (error) {
-      console.error(`[MCPClient] Error during MCP server initialization for user ${this.userId}:`, error);
+      console.error(
+        `[MCPClient] Error during MCP server initialization for user ${this.userId}:`,
+        error,
+      );
       throw error; // Re-throw to trigger retry logic
     }
   }
@@ -121,11 +130,11 @@ export class MCPClient {
    * @param newServers New server configs
    */
   async updateServerConnections(
-    newServers: Record<string, McpServerConfig>
+    newServers: Record<string, McpServerConfig>,
   ): Promise<void> {
     this.isConnecting = true;
     const currentNames = new Set(
-      this.connections.map((conn) => conn.server.name)
+      this.connections.map((conn) => conn.server.name),
     );
     const newNames = new Set(Object.keys(newServers));
 
@@ -139,7 +148,7 @@ export class MCPClient {
     // Update or add servers
     for (const [name, config] of Object.entries(newServers)) {
       const currentConnection = this.connections.find(
-        (conn) => conn.server.name === name
+        (conn) => conn.server.name === name,
       );
 
       // Handle disabled servers
@@ -153,10 +162,10 @@ export class MCPClient {
             } catch (error) {
               console.error(
                 `Failed to close connection for disabled server ${name}:`,
-                error
+                error,
               );
             }
-            currentConnection.server.status = "disconnected";
+            currentConnection.server.status = 'disconnected';
             currentConnection.server.disabled = true;
             console.log(`Disconnected disabled MCP server: ${name}`);
           }
@@ -166,7 +175,7 @@ export class MCPClient {
             server: {
               name,
               config: JSON.stringify(config),
-              status: "disconnected",
+              status: 'disconnected',
               disabled: true,
             },
             client: null as any, // We won't use these for disabled servers
@@ -210,7 +219,7 @@ export class MCPClient {
         } catch (error) {
           console.error(
             `Failed to connect re-enabled MCP server ${name}:`,
-            error
+            error,
           );
         }
       }
@@ -226,32 +235,32 @@ export class MCPClient {
    */
   private async newConnectToServer(
     name: string,
-    config: z.infer<typeof StdioConfigSchema> | z.infer<typeof SseConfigSchema>
+    config: z.infer<typeof StdioConfigSchema> | z.infer<typeof SseConfigSchema>,
   ): Promise<void> {
     // Remove existing connection if it exists (should never happen, the connection should be deleted beforehand)
     this.connections = this.connections.filter(
-      (conn) => conn.server.name !== name
+      (conn) => conn.server.name !== name,
     );
 
     try {
       // Each MCP server requires its own transport connection and has unique capabilities, configurations, and error handling. Having separate clients also allows proper scoping of resources/tools and independent server management like reconnection.
       const client = new Client(
         {
-          name: "frida-smart-assistant-mcp-client",
-          version: "1.0.0",
+          name: 'frida-smart-assistant-mcp-client',
+          version: '1.0.0',
         },
         {
           capabilities: {},
-        }
+        },
       );
 
       let transport: StdioClientTransport | SSEClientTransport;
 
-      if (config.transportType === "sse") {
-        console.log("Creating SSE transport for:", name);
+      if (config.transportType === 'sse') {
+        console.log('Creating SSE transport for:', name);
         transport = new SSEClientTransport(new URL(config.url), {});
       } else {
-        console.log("Creating stdio transport for:", name);
+        console.log('Creating stdio transport for:', name);
         transport = new StdioClientTransport({
           command: config.command,
           args: config.args,
@@ -260,27 +269,27 @@ export class MCPClient {
             ...(process.env.PATH ? { PATH: process.env.PATH } : {}),
             // ...(process.env.NODE_PATH ? { NODE_PATH: process.env.NODE_PATH } : {}),
           },
-          stderr: "pipe", // necessary for stderr to be available
+          stderr: 'pipe', // necessary for stderr to be available
         });
       }
 
       transport.onerror = async (error) => {
         console.error(`Transport error for "${name}":`, error);
         const connection = this.connections.find(
-          (conn) => conn.server.name === name
+          (conn) => conn.server.name === name,
         );
         if (connection) {
-          connection.server.status = "disconnected";
+          connection.server.status = 'disconnected';
           // this.appendErrorMessage(connection, error.message);
         }
       };
 
       transport.onclose = async () => {
         const connection = this.connections.find(
-          (conn) => conn.server.name === name
+          (conn) => conn.server.name === name,
         );
         if (connection) {
-          connection.server.status = "disconnected";
+          connection.server.status = 'disconnected';
         }
       };
 
@@ -288,7 +297,7 @@ export class MCPClient {
         server: {
           name,
           config: JSON.stringify(config),
-          status: "connecting",
+          status: 'connecting',
           disabled: config.disabled,
         },
         client,
@@ -296,13 +305,13 @@ export class MCPClient {
       };
       this.connections.push(connection);
 
-      if (config.transportType === "stdio") {
+      if (config.transportType === 'stdio') {
         // transport.stderr is only available after the process has been started. However we can't start it separately from the .connect() call because it also starts the transport. And we can't place this after the connect call since we need to capture the stderr stream before the connection is established, in order to capture errors during the connection process.
         // As a workaround, we start the transport ourselves, and then monkey-patch the start method to no-op so that .connect() doesn't try to start it again.
         await transport.start();
         const stderrStream = (transport as StdioClientTransport).stderr;
         if (stderrStream) {
-          stderrStream.on("data", async (data: Buffer) => {
+          stderrStream.on('data', async (data: Buffer) => {
             const output = data.toString();
             // Check if output contains INFO level log
             const isInfoLog = !/\berror\b/i.test(output);
@@ -314,7 +323,7 @@ export class MCPClient {
               // Treat as error log
               console.error(`Server "${name}" stderr:`, output);
               const connection = this.connections.find(
-                (conn) => conn.server.name === name
+                (conn) => conn.server.name === name,
               );
               if (connection) {
                 // this.appendErrorMessage(connection, output);
@@ -334,8 +343,8 @@ export class MCPClient {
       // Connect
       await client.connect(transport);
 
-      connection.server.status = "connected";
-      connection.server.error = "";
+      connection.server.status = 'connected';
+      connection.server.error = '';
 
       // Initial fetch of tools and resources
       connection.server.tools = await this.fetchToolsList(name);
@@ -345,10 +354,10 @@ export class MCPClient {
     } catch (error) {
       // Update status with error
       const connection = this.connections.find(
-        (conn) => conn.server.name === name
+        (conn) => conn.server.name === name,
       );
       if (connection) {
-        connection.server.status = "disconnected";
+        connection.server.status = 'disconnected';
         // this.appendErrorMessage(
         //   connection,
         //   error instanceof Error ? error.message : String(error)
@@ -366,7 +375,7 @@ export class MCPClient {
   private async fetchToolsList(serverName: string): Promise<McpTool[]> {
     try {
       const connection = this.connections.find(
-        (conn) => conn.server.name === serverName
+        (conn) => conn.server.name === serverName,
       );
 
       if (!connection) {
@@ -374,11 +383,11 @@ export class MCPClient {
       }
 
       const response = await connection.client.request(
-        { method: "tools/list" },
+        { method: 'tools/list' },
         ListToolsResultSchema,
         {
           timeout: DEFAULT_REQUEST_TIMEOUT_MS,
-        }
+        },
       );
 
       // Get autoApprove settings
@@ -409,9 +418,9 @@ export class MCPClient {
       const response = await this.connections
         .find((conn) => conn.server.name === serverName)
         ?.client.request(
-          { method: "resources/list" },
+          { method: 'resources/list' },
           ListResourcesResultSchema,
-          { timeout: DEFAULT_REQUEST_TIMEOUT_MS }
+          { timeout: DEFAULT_REQUEST_TIMEOUT_MS },
         );
       return response?.resources || [];
     } catch (error) {
@@ -426,17 +435,17 @@ export class MCPClient {
    * @returns List of resource templates
    */
   private async fetchResourceTemplatesList(
-    serverName: string
+    serverName: string,
   ): Promise<McpResourceTemplate[]> {
     try {
       const response = await this.connections
         .find((conn) => conn.server.name === serverName)
         ?.client.request(
-          { method: "resources/templates/list" },
+          { method: 'resources/templates/list' },
           ListResourceTemplatesResultSchema,
           {
             timeout: DEFAULT_REQUEST_TIMEOUT_MS,
-          }
+          },
         );
 
       return response?.resourceTemplates || [];
@@ -458,28 +467,28 @@ export class MCPClient {
    */
   public async addRemoteServer(
     serverName: string,
-    serverUrl: string
+    serverUrl: string,
   ): Promise<void> {
-    console.log("Adding remote MCP server:", serverName, serverUrl);
+    console.log('Adding remote MCP server:', serverName, serverUrl);
 
     try {
       // Get current MCP servers for this user
       const currentServers = await getMcpServers(this.userId);
 
       if (!currentServers) {
-        throw new Error("Failed to read MCP config");
+        throw new Error('Failed to read MCP config');
       }
 
       if (currentServers.mcpServers[serverName]) {
         throw new Error(
-          `An MCP server with the name "${serverName}" already exists`
+          `An MCP server with the name "${serverName}" already exists`,
         );
       }
 
       const urlValidation = z.string().url().safeParse(serverUrl);
       if (!urlValidation.success) {
         throw new Error(
-          `Invalid server URL: ${serverUrl}. Please provide a valid URL.`
+          `Invalid server URL: ${serverUrl}. Please provide a valid URL.`,
         );
       }
 
@@ -498,9 +507,9 @@ export class MCPClient {
       // Update server connections
       await this.updateServerConnections(currentServers.mcpServers);
 
-      console.log("Successfully added remote MCP server:", serverName);
+      console.log('Successfully added remote MCP server:', serverName);
     } catch (error) {
-      console.error("Failed to add remote MCP server:", error);
+      console.error('Failed to add remote MCP server:', error);
       throw error;
     }
   }
@@ -509,22 +518,22 @@ export class MCPClient {
    * Adds a new stdio MCP server to the firebase and updates the server connections.
    */
   public async addStdioServer(): Promise<void> {
-    console.log("Adding stdio MCP server");
+    console.log('Adding stdio MCP server');
 
     try {
       // Get current MCP servers for this user
       const currentServers = await getMcpServers(this.userId);
 
       if (!currentServers) {
-        throw new Error("Failed to read MCP config");
+        throw new Error('Failed to read MCP config');
       }
 
       // Update server connections
       await this.updateServerConnections(currentServers.mcpServers);
 
-      console.log("Successfully added stdio MCP server");
+      console.log('Successfully added stdio MCP server');
     } catch (error) {
-      console.error("Failed to add stdio MCP server:", error);
+      console.error('Failed to add stdio MCP server:', error);
       throw error;
     }
   }
@@ -538,7 +547,7 @@ export class MCPClient {
     try {
       const config = await getMcpServers(this.userId);
       if (!config) {
-        throw new Error("Failed to read or validate MCP settings");
+        throw new Error('Failed to read or validate MCP settings');
       }
 
       if (config.mcpServers[serverName]) {
@@ -551,65 +560,65 @@ export class MCPClient {
         await this.updateServerConnections(config.mcpServers);
       }
     } catch (error) {
-      console.error("Failed to update server disabled state:", error);
+      console.error('Failed to update server disabled state:', error);
       if (error instanceof Error) {
-        console.error("Error details:", error.message, error.stack);
+        console.error('Error details:', error.message, error.stack);
       }
       throw error;
     }
   }
 
   /**
-	 * Calls a tool on a specific MCP server.
-	 * @param serverName - The name of the MCP server to call the tool on.
-	 * @param toolName - The name of the tool to call.
-	 * @param toolArguments - The arguments to pass to the tool.
-	 * @returns A promise that resolves to the response from the tool.
-	 */
-	async callTool(
-		serverName: string,
-		toolName: string,
-		toolArguments?: Record<string, unknown>
-	): Promise<CallToolResult> {
-		const connection = this.connections.find(
-			(conn) => conn.server.name === serverName
-		);
-		if (!connection) {
-			throw new Error(
-				`No connection found for server: ${serverName}. Please make sure to use MCP servers available under 'Connected MCP Servers'.`
-			);
-		}
+   * Calls a tool on a specific MCP server.
+   * @param serverName - The name of the MCP server to call the tool on.
+   * @param toolName - The name of the tool to call.
+   * @param toolArguments - The arguments to pass to the tool.
+   * @returns A promise that resolves to the response from the tool.
+   */
+  async callTool(
+    serverName: string,
+    toolName: string,
+    toolArguments?: Record<string, unknown>,
+  ): Promise<CallToolResult> {
+    const connection = this.connections.find(
+      (conn) => conn.server.name === serverName,
+    );
+    if (!connection) {
+      throw new Error(
+        `No connection found for server: ${serverName}. Please make sure to use MCP servers available under 'Connected MCP Servers'.`,
+      );
+    }
 
-		if (connection.server.disabled) {
-			throw new Error(`Server "${serverName}" is disabled and cannot be used`);
-		}
+    if (connection.server.disabled) {
+      throw new Error(`Server "${serverName}" is disabled and cannot be used`);
+    }
 
-		let timeout = secondsToMs(DEFAULT_MCP_TIMEOUT_SECONDS); // sdk expects ms
+    let timeout = secondsToMs(DEFAULT_MCP_TIMEOUT_SECONDS); // sdk expects ms
 
-		try {
-			const config = JSON.parse(connection.server.config);
-			const parsedConfig = ServerConfigSchema.parse(config);
-			timeout = secondsToMs(parsedConfig.timeout);
-		} catch (error) {
-			console.error(
-				`Failed to parse timeout configuration for server ${serverName}: ${error}`
-			);
-		}
+    try {
+      const config = JSON.parse(connection.server.config);
+      const parsedConfig = ServerConfigSchema.parse(config);
+      timeout = secondsToMs(parsedConfig.timeout);
+    } catch (error) {
+      console.error(
+        `Failed to parse timeout configuration for server ${serverName}: ${error}`,
+      );
+    }
 
-		return await connection.client.request(
-			{
-				method: "tools/call",
-				params: {
-					name: toolName,
-					arguments: toolArguments,
-				},
-			},
-			CallToolResultSchema,
-			{
-				timeout,
-			}
-		);
-	}
+    return await connection.client.request(
+      {
+        method: 'tools/call',
+        params: {
+          name: toolName,
+          arguments: toolArguments,
+        },
+      },
+      CallToolResultSchema,
+      {
+        timeout,
+      },
+    );
+  }
 
   /**
    * Restarts a server connection.
@@ -620,12 +629,12 @@ export class MCPClient {
 
     // Get existing connection and update its status
     const connection = this.connections.find(
-      (conn) => conn.server.name === serverName
+      (conn) => conn.server.name === serverName,
     );
     const config = connection?.server.config;
     if (config) {
-      connection.server.status = "connecting";
-      connection.server.error = "";
+      connection.server.status = 'connecting';
+      connection.server.error = '';
       // await setTimeoutPromise(500); // artificial delay to show user that server is restarting
       try {
         await this.deleteConnection(serverName);
@@ -648,7 +657,7 @@ export class MCPClient {
    */
   async deleteConnection(name: string): Promise<void> {
     const connection = this.connections.find(
-      (conn) => conn.server.name === name
+      (conn) => conn.server.name === name,
     );
     if (connection) {
       try {
@@ -663,33 +672,33 @@ export class MCPClient {
         console.error(`Failed to close transport for ${name}:`, error);
       }
       this.connections = this.connections.filter(
-        (conn) => conn.server.name !== name
+        (conn) => conn.server.name !== name,
       );
     }
   }
 
   /**
-	 * Deletes a server from the settings and updates connections.
-	 * @param serverName Server name
-	 */
-	public async deleteServer(serverName: string) {
-		try {
-			const config = await getMcpServers(this.userId);
-			if (!config.mcpServers || typeof config.mcpServers !== "object") {
-				config.mcpServers = {};
-			}
-			if (config.mcpServers[serverName]) {
-				delete config.mcpServers[serverName];
-				await saveMcpServers(this.userId, config);
-				await this.updateServerConnections(config.mcpServers);
-			} else {
-				throw new Error(`${serverName} not found in MCP configuration`);
-			}
-		} catch (error) {
-      console.error("Failed to delete server:", error);
-			throw error;
-		}
-	}
+   * Deletes a server from the settings and updates connections.
+   * @param serverName Server name
+   */
+  public async deleteServer(serverName: string) {
+    try {
+      const config = await getMcpServers(this.userId);
+      if (!config.mcpServers || typeof config.mcpServers !== 'object') {
+        config.mcpServers = {};
+      }
+      if (config.mcpServers[serverName]) {
+        delete config.mcpServers[serverName];
+        await saveMcpServers(this.userId, config);
+        await this.updateServerConnections(config.mcpServers);
+      } else {
+        throw new Error(`${serverName} not found in MCP configuration`);
+      }
+    } catch (error) {
+      console.error('Failed to delete server:', error);
+      throw error;
+    }
+  }
 
   /**
    * Disconnects all server connections.
@@ -704,7 +713,7 @@ export class MCPClient {
       } catch (error) {
         console.error(
           `Failed to close connection for ${connection.server.name}:`,
-          error
+          error,
         );
       }
     });

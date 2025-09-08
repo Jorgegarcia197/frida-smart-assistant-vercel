@@ -1,13 +1,11 @@
 'use client';
 
-import type { UIMessage } from 'ai';
 import cx from 'classnames';
 import { AnimatePresence, motion } from 'framer-motion';
 import { memo, useState } from 'react';
 import type { Vote } from '@/lib/db/firebase-types';
-import { DocumentToolCall, DocumentToolResult } from './document';
+import { DocumentToolResult } from './document';
 import { PencilEditIcon, SparklesIcon } from './icons';
-import { Markdown } from './markdown';
 import { MessageActions } from './message-actions';
 import { PreviewAttachment } from './preview-attachment';
 import { Weather } from './weather';
@@ -20,6 +18,17 @@ import { DocumentPreview } from './document-preview';
 import { MessageReasoning } from './message-reasoning';
 import type { UseChatHelpers } from '@ai-sdk/react';
 import { McpToolCard } from './mcp-tool-card';
+import type { ChatMessage } from '@/lib/types';
+import {
+  Tool,
+  ToolContent,
+  ToolHeader,
+  ToolInput,
+  ToolOutput,
+} from './elements/tool';
+import { MessageContent } from './elements/message';
+import { Response } from './elements/response';
+import { useDataStream } from './data-stream-provider';
 
 const PurePreviewMessage = ({
   chatId,
@@ -27,77 +36,87 @@ const PurePreviewMessage = ({
   vote,
   isLoading,
   setMessages,
-  reload,
+  regenerate,
   isReadonly,
   requiresScrollPadding,
+  isArtifactVisible,
 }: {
   chatId: string;
-  message: UIMessage;
+  message: ChatMessage;
   vote: Vote | undefined;
   isLoading: boolean;
-  setMessages: UseChatHelpers['setMessages'];
-  reload: UseChatHelpers['reload'];
+  setMessages: UseChatHelpers<ChatMessage>['setMessages'];
+  regenerate: UseChatHelpers<ChatMessage>['regenerate'];
   isReadonly: boolean;
   requiresScrollPadding: boolean;
+  isArtifactVisible: boolean;
 }) => {
   const [mode, setMode] = useState<'view' | 'edit'>('view');
+
+  const attachmentsFromMessage = message.parts.filter(
+    (part) => part.type === 'file',
+  );
+
+  useDataStream();
 
   return (
     <AnimatePresence>
       <motion.div
         data-testid={`message-${message.role}`}
-        className="w-full mx-auto max-w-3xl px-4 group/message"
+        className="w-full group/message"
         initial={{ y: 5, opacity: 0 }}
         animate={{ y: 0, opacity: 1 }}
         data-role={message.role}
       >
         <div
-          className={cn(
-            'flex gap-4 w-full group-data-[role=user]/message:ml-auto group-data-[role=user]/message:max-w-2xl',
-            {
-              'w-full': mode === 'edit',
-              'group-data-[role=user]/message:w-fit': mode !== 'edit',
-            },
-          )}
+          className={cn('flex items-start gap-3', {
+            'w-full': mode === 'edit',
+            'max-w-xl ml-auto justify-end mr-6':
+              message.role === 'user' && mode !== 'edit',
+            'justify-start -ml-3': message.role === 'assistant',
+          })}
         >
           {message.role === 'assistant' && (
-            <div className="size-8 flex items-center rounded-full justify-center ring-1 shrink-0 ring-border bg-background">
-              <div className="translate-y-px">
-                <SparklesIcon size={14} />
-              </div>
+            <div className="flex justify-center items-center mt-1 rounded-full ring-1 size-8 shrink-0 ring-border bg-background">
+              <SparklesIcon size={14} />
             </div>
           )}
 
           <div
-            className={cn('flex flex-col gap-4 w-full', {
+            className={cn('flex flex-col gap-4', {
               'min-h-96': message.role === 'assistant' && requiresScrollPadding,
+              'w-fit': message.role === 'user',
+              'w-full': message.role === 'assistant' || mode === 'edit',
             })}
           >
-            {message.experimental_attachments &&
-              message.experimental_attachments.length > 0 && (
-                <div
-                  data-testid={`message-attachments`}
-                  className="flex flex-row justify-end gap-2"
-                >
-                  {message.experimental_attachments.map((attachment) => (
-                    <PreviewAttachment
-                      key={attachment.url}
-                      attachment={attachment}
-                    />
-                  ))}
-                </div>
-              )}
+            {attachmentsFromMessage.length > 0 && (
+              <div
+                data-testid={`message-attachments`}
+                className="flex flex-row gap-2 justify-end"
+              >
+                {attachmentsFromMessage.map((attachment) => (
+                  <PreviewAttachment
+                    key={attachment.url}
+                    attachment={{
+                      name: attachment.filename ?? 'file',
+                      contentType: attachment.mediaType,
+                      url: attachment.url,
+                    }}
+                  />
+                ))}
+              </div>
+            )}
 
             {message.parts?.map((part, index) => {
               const { type } = part;
               const key = `message-${message.id}-part-${index}`;
 
-              if (type === 'reasoning') {
+              if (type === 'reasoning' && part.text?.trim().length > 0) {
                 return (
                   <MessageReasoning
                     key={key}
                     isLoading={isLoading}
-                    reasoning={part.reasoning}
+                    reasoning={part.text}
                   />
                 );
               }
@@ -124,123 +143,195 @@ const PurePreviewMessage = ({
                         </Tooltip>
                       )}
 
-                      <div
+                      <MessageContent
                         data-testid="message-content"
-                        className={cn('flex flex-col gap-4', {
-                          'bg-primary text-primary-foreground px-3 py-2 rounded-xl':
+                        className={cn('justify-start items-start text-left', {
+                          'bg-primary text-primary-foreground':
                             message.role === 'user',
+                          'bg-transparent -ml-4': message.role === 'assistant',
                         })}
                       >
-                        <Markdown>{sanitizeText(part.text)}</Markdown>
-                      </div>
+                        <Response>{sanitizeText(part.text)}</Response>
+                      </MessageContent>
                     </div>
                   );
                 }
 
                 if (mode === 'edit') {
                   return (
-                    <div key={key} className="flex flex-row gap-2 items-start">
+                    <div
+                      key={key}
+                      className="flex flex-row gap-3 items-start w-full"
+                    >
                       <div className="size-8" />
-
-                      <MessageEditor
-                        key={message.id}
-                        message={message}
-                        setMode={setMode}
-                        setMessages={setMessages}
-                        reload={reload}
-                      />
+                      <div className="flex-1 min-w-0 ">
+                        <MessageEditor
+                          key={message.id}
+                          message={message}
+                          setMode={setMode}
+                          setMessages={setMessages}
+                          regenerate={regenerate}
+                        />
+                      </div>
                     </div>
                   );
                 }
               }
 
-              if (type === 'tool-invocation') {
-                const { toolInvocation } = part;
-                const { toolName, toolCallId, state } = toolInvocation;
+              if (type === 'tool-getWeather') {
+                const { toolCallId, state } = part;
 
-                // Check if this is an MCP tool (contains double underscore)
-                const isMcpTool = toolName.includes('__');
-                
-                if (state === 'call') {
-                  const { args } = toolInvocation;
+                return (
+                  <Tool key={toolCallId} defaultOpen={true}>
+                    <ToolHeader type="tool-getWeather" state={state} />
+                    <ToolContent>
+                      {state === 'input-available' && (
+                        <ToolInput input={part.input} />
+                      )}
+                      {state === 'output-available' && (
+                        <ToolOutput
+                          output={<Weather weatherAtLocation={part.output} />}
+                          errorText={undefined}
+                        />
+                      )}
+                    </ToolContent>
+                  </Tool>
+                );
+              }
+              if (type === 'tool-createDocument') {
+                const { toolCallId } = part;
 
+                if (part.output && 'error' in part.output) {
                   return (
                     <div
                       key={toolCallId}
-                      className={cx({
-                        skeleton: ['getWeather'].includes(toolName),
-                      })}
+                      className="p-4 text-red-500 bg-red-50 rounded-lg border border-red-200 dark:bg-red-950/50"
                     >
-                      {isMcpTool ? (
-                        <McpToolCard
-                          serverName={toolName.split('__')[0]}
-                          toolName={toolName}
-                          state="call"
-                          args={args}
-                          isReadonly={isReadonly}
-                        />
-                      ) : toolName === 'getWeather' ? (
-                        <Weather />
-                      ) : toolName === 'createDocument' ? (
-                        <DocumentPreview isReadonly={isReadonly} args={args} />
-                      ) : toolName === 'updateDocument' ? (
-                        <DocumentToolCall
-                          type="update"
-                          args={args}
-                          isReadonly={isReadonly}
-                        />
-                      ) : toolName === 'requestSuggestions' ? (
-                        <DocumentToolCall
-                          type="request-suggestions"
-                          args={args}
-                          isReadonly={isReadonly}
-                        />
-                      ) : null}
+                      Error creating document: {String(part.output.error)}
                     </div>
                   );
                 }
 
-                if (state === 'result') {
-                  const { result} = toolInvocation;
+                return (
+                  <DocumentPreview
+                    key={toolCallId}
+                    isReadonly={isReadonly}
+                    result={part.output}
+                  />
+                );
+              }
 
+              if (type === 'tool-createMermaidDiagram') {
+                const { toolCallId, output } = part;
+
+                if (output && 'error' in output) {
                   return (
-                    <div key={toolCallId}>
-                      {isMcpTool ? (
-                        <McpToolCard
-                          serverName={toolName.split('__')[0]}
-                          toolName={toolName}
-                          state="result"
-                          result={"The tool was executed successfully! Check the result below."}
-                          isReadonly={isReadonly}
-                        />
-                      ) : toolName === 'getWeather' ? (
-                        <Weather weatherAtLocation={result} />
-                      ) : toolName === 'createDocument' ? (
-                        <DocumentPreview
-                          isReadonly={isReadonly}
-                          result={result}
-                        />
-                      ) : toolName === 'updateDocument' ? (
-                        <DocumentToolResult
-                          type="update"
-                          result={result}
-                          isReadonly={isReadonly}
-                        />
-                      ) : toolName === 'requestSuggestions' ? (
-                        <DocumentToolResult
-                          type="request-suggestions"
-                          result={result}
-                          isReadonly={isReadonly}
-                        />
-                      ) : toolName === 'createMermaidDiagram' ? (
-                        <DocumentPreview
-                          isReadonly={isReadonly}
-                          result={result}
-                        />
-                      ) : (
-                        <pre>{JSON.stringify(result, null, 2)}</pre>
-                      )}
+                    <div
+                      key={toolCallId}
+                      className="p-4 text-red-500 bg-red-50 rounded-lg border border-red-200 dark:bg-red-950/50"
+                    >
+                      Error creating diagram: {String(output.error)}
                     </div>
+                  );
+                }
+
+                return (
+                  <DocumentPreview
+                    key={toolCallId}
+                    isReadonly={isReadonly}
+                    result={output}
+                  />
+                );
+              }
+
+              if (type === 'tool-updateDocument') {
+                const { toolCallId } = part;
+
+                if (part.output && 'error' in part.output) {
+                  return (
+                    <div
+                      key={toolCallId}
+                      className="p-4 text-red-500 bg-red-50 rounded-lg border border-red-200 dark:bg-red-950/50"
+                    >
+                      Error updating document: {String(part.output.error)}
+                    </div>
+                  );
+                }
+
+                return (
+                  <div key={toolCallId} className="relative">
+                    <DocumentPreview
+                      isReadonly={isReadonly}
+                      result={part.output}
+                      args={{ ...part.output, isUpdate: true }}
+                    />
+                  </div>
+                );
+              }
+
+              if (type === 'tool-requestSuggestions') {
+                const { toolCallId, state } = part;
+
+                return (
+                  <Tool key={toolCallId} defaultOpen={true}>
+                    <ToolHeader type="tool-requestSuggestions" state={state} />
+                    <ToolContent>
+                      {state === 'input-available' && (
+                        <ToolInput input={part.input} />
+                      )}
+                      {state === 'output-available' && (
+                        <ToolOutput
+                          output={
+                            'error' in part.output ? (
+                              <div className="p-2 text-red-500 rounded border">
+                                Error: {String(part.output.error)}
+                              </div>
+                            ) : (
+                              <DocumentToolResult
+                                type="request-suggestions"
+                                result={part.output}
+                                isReadonly={isReadonly}
+                              />
+                            )
+                          }
+                          errorText={undefined}
+                        />
+                      )}
+                    </ToolContent>
+                  </Tool>
+                );
+              }
+
+              // MCP Tool
+              if (type === 'dynamic-tool') {
+                const { state, toolCallId } = part;
+                const [serverName, toolName] = type.split('__', 2);
+
+                const args = {};
+
+                if (state === 'input-available') {
+                  return (
+                    <McpToolCard
+                      key={toolCallId}
+                      serverName={serverName}
+                      toolName={toolName}
+                      state="call"
+                      args={args}
+                      isReadonly={isReadonly}
+                    />
+                  );
+                } else if (state === 'output-available') {
+                  return (
+                    <McpToolCard
+                      key={toolCallId}
+                      serverName={serverName}
+                      toolName={toolName}
+                      state="result"
+                      result={
+                        'The tool was executed successfully! Check the result below.'
+                      }
+                      isReadonly={isReadonly}
+                    />
                   );
                 }
               }
@@ -272,7 +363,7 @@ export const PreviewMessage = memo(
     if (!equal(prevProps.message.parts, nextProps.message.parts)) return false;
     if (!equal(prevProps.vote, nextProps.vote)) return false;
 
-    return true;
+    return false;
   },
 );
 

@@ -1,6 +1,6 @@
-import { useState, useCallback, useEffect } from "react";
-import { McpServer } from "@/lib/mcp/types";
-import { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
+import { useState, useCallback, useEffect } from 'react';
+import type { McpServer } from '@/lib/mcp/types';
+import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 
 interface UseMcpClientReturn {
   servers: McpServer[];
@@ -12,7 +12,7 @@ interface UseMcpClientReturn {
   addStdioServer: () => Promise<void>;
   toggleServerDisabled: (
     serverName: string,
-    disabled: boolean
+    disabled: boolean,
   ) => Promise<void>;
   restartServer: (serverName: string) => Promise<void>;
   deleteServer: (serverName: string) => Promise<void>;
@@ -20,7 +20,7 @@ interface UseMcpClientReturn {
   callTool: (
     serverName: string,
     toolName: string,
-    toolArguments?: Record<string, unknown>
+    toolArguments?: Record<string, unknown>,
   ) => Promise<CallToolResult>;
 }
 
@@ -35,8 +35,8 @@ export function useMcpClient(userId: string): UseMcpClientReturn {
       const response = await fetch(url, {
         ...options,
         headers: {
-          "Content-Type": "application/json",
-          "x-user-id": userId,
+          'Content-Type': 'application/json',
+          'x-user-id': userId,
           ...options.headers,
         },
       });
@@ -48,23 +48,23 @@ export function useMcpClient(userId: string): UseMcpClientReturn {
 
       return response.json();
     },
-    [userId]
+    [userId],
   );
 
   const getServers = useCallback(async () => {
     if (!userId) return;
-    
+
     setLoading(true);
     setError(null);
     try {
-      const data = await makeRequest("/api/mcp/servers");
+      const data = await makeRequest('/api/mcp/servers');
       setServers(data.servers);
       setInitialized(true);
     } catch (err) {
       const errorMessage =
-        err instanceof Error ? err.message : "Failed to get servers";
+        err instanceof Error ? err.message : 'Failed to get servers';
       setError(errorMessage);
-      console.error("Error getting servers:", err);
+      console.error('Error getting servers:', err);
     } finally {
       setLoading(false);
     }
@@ -75,67 +75,64 @@ export function useMcpClient(userId: string): UseMcpClientReturn {
       setLoading(true);
       setError(null);
       try {
-        await makeRequest("/api/mcp/servers/add-sse", {
-          method: "POST",
+        await makeRequest('/api/mcp/servers/add-sse', {
+          method: 'POST',
           body: JSON.stringify({ serverName, serverUrl }),
         });
         // Refresh servers list
         await getServers();
       } catch (err) {
         const errorMessage =
-          err instanceof Error ? err.message : "Failed to add sse server";
+          err instanceof Error ? err.message : 'Failed to add sse server';
         setError(errorMessage);
         throw err;
       } finally {
         setLoading(false);
       }
     },
-    [makeRequest, getServers]
+    [makeRequest, getServers],
   );
-  
-  const addStdioServer = useCallback(
-    async () => {
-      setLoading(true);
-      setError(null);
-      try {
-        await makeRequest("/api/mcp/servers/add-stdio", {
-          method: "POST",
-        });
-        // Refresh servers list
-        await getServers();
-      } catch (err) {
-        const errorMessage =
-          err instanceof Error ? err.message : "Failed to add stdio server";
-        setError(errorMessage);
-        throw err;
-      } finally {
-        setLoading(false);
-      }
-    },
-    [makeRequest, getServers]
-  );
+
+  const addStdioServer = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      await makeRequest('/api/mcp/servers/add-stdio', {
+        method: 'POST',
+      });
+      // Refresh servers list
+      await getServers();
+    } catch (err) {
+      const errorMessage =
+        err instanceof Error ? err.message : 'Failed to add stdio server';
+      setError(errorMessage);
+      throw err;
+    } finally {
+      setLoading(false);
+    }
+  }, [makeRequest, getServers]);
 
   const toggleServerDisabled = useCallback(
     async (serverName: string, disabled: boolean) => {
       setLoading(true);
       setError(null);
       try {
-        await makeRequest("/api/mcp/servers/toggle", {
-          method: "POST",
+        await makeRequest('/api/mcp/servers/toggle', {
+          method: 'POST',
           body: JSON.stringify({ serverName, disabled }),
         });
         // Refresh servers list
         await getServers();
       } catch (err) {
         const errorMessage =
-          err instanceof Error ? err.message : "Failed to toggle server";
+          err instanceof Error ? err.message : 'Failed to toggle server';
         setError(errorMessage);
         throw err;
       } finally {
         setLoading(false);
       }
     },
-    [makeRequest, getServers]
+    [makeRequest, getServers],
   );
 
   const restartServer = useCallback(
@@ -143,22 +140,22 @@ export function useMcpClient(userId: string): UseMcpClientReturn {
       setLoading(true);
       setError(null);
       try {
-        await makeRequest("/api/mcp/servers/restart", {
-          method: "POST",
+        await makeRequest('/api/mcp/servers/restart', {
+          method: 'POST',
           body: JSON.stringify({ serverName }),
         });
         // Refresh servers list
         await getServers();
       } catch (err) {
         const errorMessage =
-          err instanceof Error ? err.message : "Failed to restart server";
+          err instanceof Error ? err.message : 'Failed to restart server';
         setError(errorMessage);
         throw err;
       } finally {
         setLoading(false);
       }
     },
-    [makeRequest, getServers]
+    [makeRequest, getServers],
   );
 
   const deleteServer = useCallback(
@@ -166,45 +163,45 @@ export function useMcpClient(userId: string): UseMcpClientReturn {
       setLoading(true);
       setError(null);
       try {
-        await makeRequest("/api/mcp/servers/delete", {
-          method: "DELETE",
+        await makeRequest('/api/mcp/servers/delete', {
+          method: 'DELETE',
           body: JSON.stringify({ serverName }),
         });
         // Refresh servers list
         await getServers();
       } catch (err) {
         const errorMessage =
-          err instanceof Error ? err.message : "Failed to delete server";
+          err instanceof Error ? err.message : 'Failed to delete server';
         setError(errorMessage);
         throw err;
       } finally {
         setLoading(false);
       }
     },
-    [makeRequest, getServers]
+    [makeRequest, getServers],
   );
 
   const callTool = useCallback(
     async (
       serverName: string,
       toolName: string,
-      toolArguments?: Record<string, unknown>
+      toolArguments?: Record<string, unknown>,
     ): Promise<CallToolResult> => {
       setError(null);
       try {
-        const data = await makeRequest("/api/mcp/tools/call", {
-          method: "POST",
+        const data = await makeRequest('/api/mcp/tools/call', {
+          method: 'POST',
           body: JSON.stringify({ serverName, toolName, toolArguments }),
         });
         return data.result;
       } catch (err) {
         const errorMessage =
-          err instanceof Error ? err.message : "Failed to call tool";
+          err instanceof Error ? err.message : 'Failed to call tool';
         setError(errorMessage);
         throw err;
       }
     },
-    [makeRequest]
+    [makeRequest],
   );
 
   // Auto-initialize servers when userId changes

@@ -26,9 +26,10 @@ export const codeDocumentHandler = createDocumentHandler<'code'>({
         const { code } = object;
 
         if (code) {
-          dataStream.writeData({
-            type: 'code-delta',
-            content: code ?? '',
+          dataStream.write({
+            type: 'data-codeDelta',
+            data: code ?? '',
+            transient: true,
           });
 
           draftContent = code;
@@ -43,7 +44,7 @@ export const codeDocumentHandler = createDocumentHandler<'code'>({
 
     const { fullStream } = streamObject({
       model: myProvider.languageModel('artifact-model'),
-      system: updateDocumentPrompt(document.content ?? '', 'code'),
+      system: updateDocumentPrompt(document.content, 'code'),
       prompt: description,
       schema: z.object({
         code: z.string(),
@@ -58,9 +59,10 @@ export const codeDocumentHandler = createDocumentHandler<'code'>({
         const { code } = object;
 
         if (code) {
-          dataStream.writeData({
-            type: 'code-delta',
-            content: code ?? '',
+          dataStream.write({
+            type: 'data-codeDelta',
+            data: code ?? '',
+            transient: true,
           });
 
           draftContent = code;

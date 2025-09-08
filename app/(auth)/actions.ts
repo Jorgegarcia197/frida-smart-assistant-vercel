@@ -1,6 +1,6 @@
 'use server';
 
-import { z } from 'zod';
+import { z } from 'zod/v3';
 
 import { getUser, createUserWithFirebaseAuth } from '@/lib/db/queries';
 import { getFirebaseUser } from '@/lib/auth/firebase-auth';

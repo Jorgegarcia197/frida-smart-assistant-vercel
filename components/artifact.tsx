@@ -1,4 +1,3 @@
-import type { Attachment, UIMessage } from 'ai';
 import { formatDistance } from 'date-fns';
 import { AnimatePresence, motion } from 'framer-motion';
 import {
@@ -29,6 +28,7 @@ import { mermaidArtifact } from '@/artifacts/mermaid/client';
 import equal from 'fast-deep-equal';
 import type { UseChatHelpers } from '@ai-sdk/react';
 import type { VisibilityType } from './visibility-selector';
+import type { Attachment, ChatMessage } from '@/lib/types';
 
 export const artifactDefinitions = [
   textArtifact,
@@ -58,34 +58,34 @@ function PureArtifact({
   chatId,
   input,
   setInput,
-  handleSubmit,
   status,
   stop,
   attachments,
   setAttachments,
-  append,
+  sendMessage,
   messages,
   setMessages,
-  reload,
+  regenerate,
   votes,
   isReadonly,
   selectedVisibilityType,
+  selectedModelId,
 }: {
   chatId: string;
   input: string;
-  setInput: UseChatHelpers['setInput'];
-  status: UseChatHelpers['status'];
-  stop: UseChatHelpers['stop'];
-  attachments: Array<Attachment>;
-  setAttachments: Dispatch<SetStateAction<Array<Attachment>>>;
-  messages: Array<UIMessage>;
-  setMessages: UseChatHelpers['setMessages'];
+  setInput: Dispatch<SetStateAction<string>>;
+  status: UseChatHelpers<ChatMessage>['status'];
+  stop: UseChatHelpers<ChatMessage>['stop'];
+  attachments: Attachment[];
+  setAttachments: Dispatch<SetStateAction<Attachment[]>>;
+  messages: ChatMessage[];
+  setMessages: UseChatHelpers<ChatMessage>['setMessages'];
   votes: Array<Vote> | undefined;
-  append: UseChatHelpers['append'];
-  handleSubmit: UseChatHelpers['handleSubmit'];
-  reload: UseChatHelpers['reload'];
+  sendMessage: UseChatHelpers<ChatMessage>['sendMessage'];
+  regenerate: UseChatHelpers<ChatMessage>['regenerate'];
   isReadonly: boolean;
   selectedVisibilityType: VisibilityType;
+  selectedModelId: string;
 }) {
   const { artifact, setArtifact, metadata, setMetadata } = useArtifact();
 
@@ -290,9 +290,9 @@ function PureArtifact({
                 x: 0,
                 scale: 1,
                 transition: {
-                  delay: 0.2,
+                  delay: 0.1,
                   type: 'spring',
-                  stiffness: 200,
+                  stiffness: 300,
                   damping: 30,
                 },
               }}
@@ -321,28 +321,28 @@ function PureArtifact({
                   votes={votes}
                   messages={messages}
                   setMessages={setMessages}
-                  reload={reload}
+                  regenerate={regenerate}
                   isReadonly={isReadonly}
                   artifactStatus={artifact.status}
                 />
 
-                <form className="flex flex-row gap-2 relative items-end w-full px-4 pb-4">
+                <div className="flex flex-row gap-2 relative items-end w-full px-4 pb-4">
                   <MultimodalInput
                     chatId={chatId}
                     input={input}
                     setInput={setInput}
-                    handleSubmit={handleSubmit}
                     status={status}
                     stop={stop}
                     attachments={attachments}
                     setAttachments={setAttachments}
                     messages={messages}
-                    append={append}
+                    sendMessage={sendMessage}
                     className="bg-background dark:bg-muted"
                     setMessages={setMessages}
                     selectedVisibilityType={selectedVisibilityType}
+                    selectedModelId={selectedModelId}
                   />
-                </form>
+                </div>
               </div>
             </motion.div>
           )}
@@ -380,9 +380,9 @@ function PureArtifact({
                     transition: {
                       delay: 0,
                       type: 'spring',
-                      stiffness: 200,
+                      stiffness: 300,
                       damping: 30,
-                      duration: 5000,
+                      duration: 0.8,
                     },
                   }
                 : {
@@ -397,9 +397,9 @@ function PureArtifact({
                     transition: {
                       delay: 0,
                       type: 'spring',
-                      stiffness: 200,
+                      stiffness: 300,
                       damping: 30,
-                      duration: 5000,
+                      duration: 0.8,
                     },
                   }
             }
@@ -478,7 +478,7 @@ function PureArtifact({
                   <Toolbar
                     isToolbarVisible={isToolbarVisible}
                     setIsToolbarVisible={setIsToolbarVisible}
-                    append={append}
+                    sendMessage={sendMessage}
                     status={status}
                     stop={stop}
                     setMessages={setMessages}
