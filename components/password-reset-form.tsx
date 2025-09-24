@@ -87,7 +87,7 @@ export function PasswordResetForm({
         {isSuccessful ? (
           <div className="flex flex-col gap-4 py-4">
             <div className="text-center text-sm text-gray-600 dark:text-gray-400">
-              We've sent a password reset link to <strong>{email}</strong>
+              We&apos;ve sent a password reset link to <strong>{email}</strong>
             </div>
             <div className="text-center text-sm text-gray-500 dark:text-gray-500">
               Check your email and click the link to reset your password. The
