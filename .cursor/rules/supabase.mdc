@@ -1,0 +1,279 @@
+---
+description: Supabase self-hosted setup and best practices with Drizzle ORM integration
+globs: **/*.ts, **/*.tsx, lib/**/*.ts, hooks/**/*.ts, app/api/**/*.ts
+alwaysApply: true
+---
+
+# Supabase Self-Hosted Best Practices
+
+This project uses **self-hosted Supabase** with **Drizzle ORM** for database operations and schema management.
+
+## Self-Hosted Setup
+
+### Docker Compose Configuration
+
+- Use the provided `docker-compose.yml` in the `supabase/` directory
+- Run `docker compose up` to start all Supabase services locally
+- Services include: Database, Auth, Storage, Edge Functions, Realtime, Analytics
+- Access Supabase Studio at `http://localhost:54323` (or configured STUDIO_PORT)
+
+### Environment Configuration
+
+```env
+# Supabase Self-Hosted URLs
+NEXT_PUBLIC_SUPABASE_URL=http://localhost:54321
+NEXT_PUBLIC_SUPABASE_ANON_KEY=your_anon_key_here
+SUPABASE_SERVICE_ROLE_KEY=your_service_role_key_here
+
+# Database Configuration
+POSTGRES_HOST=localhost
+POSTGRES_PORT=54322
+POSTGRES_DB=postgres
+POSTGRES_PASSWORD=your_postgres_password
+
+# Other required variables
+JWT_SECRET=your_jwt_secret
+SECRET_KEY_BASE=your_secret_key_base
+```
+
+### Database Management
+
+- **Use Drizzle ORM** for all database operations and schema definitions
+- Schema files are located in `db/schema/`
+- Run migrations with: `bun run db:migrate`
+- Generate migrations with: `bun run db:generate`
+- Use `drizzle.config.ts` for configuration
+
+## Drizzle ORM Integration
+
+### Schema Definitions
+
+```typescript
+// Example schema pattern
+import { pgTable, text, timestamp, uuid } from 'drizzle-orm/pg-core';
+
+export const users = pgTable('users', {
+  id: uuid('id').defaultRandom().primaryKey(),
+  email: text('email').notNull().unique(),
+  createdAt: timestamp('created_at').defaultNow(),
+});
+```
+
+### Database Operations
+
+```typescript
+// Use Drizzle client for queries
+import { db } from '@/db';
+import { users } from '@/db/schema/users';
+
+// Insert
+const newUser = await db.insert(users).values({ email: 'user@example.com' });
+
+// Select
+const userList = await db.select().from(users);
+
+// Update
+await db.update(users).set({ email: 'new@example.com' }).where(eq(users.id, userId));
+```
+
+## Authentication Patterns
+
+### Server-Side Auth
+
+```typescript
+import { createServerClient } from '@supabase/ssr';
+import { cookies } from 'next/headers';
+
+export function createClient() {
+  const cookieStore = cookies();
+  
+  return createServerClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+    {
+      cookies: {
+        get(name: string) {
+          return cookieStore.get(name)?.value;
+        },
+      },
+    }
+  );
+}
+```
+
+### Client-Side Auth
+
+```typescript
+import { createClient } from '@supabase/supabase-js';
+
+const supabase = createClient(
+  process.env.NEXT_PUBLIC_SUPABASE_URL!,
+  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+  {
+    auth: {
+      autoRefreshToken: true,
+      persistSession: true,
+      detectSessionInUrl: false,
+    },
+  }
+);
+```
+
+## Storage & File Management
+
+### File Upload Patterns
+
+```typescript
+// Upload files to self-hosted storage
+const { data, error } = await supabase.storage
+  .from('bucket-name')
+  .upload(`folder/${fileName}`, file, {
+    cacheControl: '3600',
+    upsert: false
+  });
+```
+
+### Storage Configuration
+
+- Storage backend configured as 'file' in docker-compose
+- Files stored in `./volumes/storage/` directory
+- Image transformation available via imgproxy service
+- Configure storage policies via SQL or Supabase Studio
+
+## Realtime Features
+
+### Subscription Patterns
+
+```typescript
+// Subscribe to table changes
+useEffect(() => {
+  const subscription = supabase
+    .channel('table-changes')
+    .on('postgres_changes', 
+      { event: '*', schema: 'public', table: 'table_name' },
+      (payload) => {
+        console.log('Change received!', payload);
+      }
+    )
+    .subscribe();
+
+  return () => {
+    subscription.unsubscribe();
+  };
+}, []);
+```
+
+## Row Level Security (RLS)
+
+### RLS Policies
+
+```sql
+-- Enable RLS
+ALTER TABLE public.table_name ENABLE ROW LEVEL SECURITY;
+
+-- Create policy
+CREATE POLICY "Users can view own records" ON public.table_name
+  FOR SELECT USING (auth.uid() = user_id);
+```
+
+### Policy Testing
+
+- Test RLS policies in Supabase Studio SQL editor
+- Verify policies work with different user contexts
+- Use service role key for admin operations
+
+## Edge Functions
+
+### Function Development
+
+```typescript
+// Edge function structure
+import { serve } from 'https://deno.land/std@0.168.0/http/server.ts';
+
+serve(async (req) => {
+  const { name } = await req.json();
+  
+  return new Response(
+    JSON.stringify({ message: `Hello ${name}!` }),
+    { headers: { "Content-Type": "application/json" } },
+  );
+});
+```
+
+### Deployment
+
+- Functions stored in `supabase/functions/`
+- Deploy with: `supabase functions deploy function-name`
+- Access at: `http://localhost:54321/functions/v1/function-name`
+
+## Development Workflow
+
+### Local Development
+
+1. Start self-hosted Supabase: `cd supabase && docker compose up`
+2. Run database migrations: `bun run db:migrate`
+3. Start Next.js dev server: `bun dev`
+4. Access Studio for database management: `http://localhost:54323`
+
+### Schema Changes
+
+1. Modify schema files in `db/schema/`
+2. Generate migration: `bun run db:generate`
+3. Apply migration: `bun run db:migrate`
+4. Update types if needed: `bun run db:introspect`
+
+## Production Deployment
+
+### Self-Hosted Production
+
+- Use production-ready Docker configuration
+- Set up proper SSL certificates
+- Configure backup strategies for PostgreSQL
+- Monitor service health and logs
+- Set up proper firewall rules
+
+### Environment Variables
+
+- Never commit secrets to version control
+- Use different keys for production
+- Set up proper CORS origins
+- Configure proper JWT secrets and expiration
+
+## Monitoring & Debugging
+
+### Logging
+
+- Check container logs: `docker compose logs service-name`
+- Monitor database performance
+- Use Supabase Studio for query analysis
+- Enable debug mode for development
+
+### Health Checks
+
+- All services have health check endpoints
+- Monitor service dependencies
+- Set up alerts for service failures
+- Regular backup verification
+
+## Best Practices
+
+### Security
+
+- Always use RLS policies for data protection
+- Validate input on both client and server
+- Use service role key only for admin operations
+- Regular security updates for Docker images
+
+### Performance
+
+- Use connection pooling (Supavisor included)
+- Implement proper caching strategies
+- Monitor query performance
+- Use indexes appropriately with Drizzle migrations
+
+### Data Management
+
+- Use Drizzle migrations for schema changes
+- Implement proper foreign key relationships
+- Use database transactions for complex operations
+- Regular database maintenance and optimization

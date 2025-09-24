@@ -1,12 +1,12 @@
 'use client';
 
-import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useActionState, useEffect, useState } from 'react';
 import { toast } from '@/components/toast';
 
 import { AuthForm } from '@/components/auth-form';
 import { SubmitButton } from '@/components/submit-button';
+import { PasswordResetForm } from '@/components/password-reset-form';
 
 import { login, type LoginActionState } from '../actions';
 import { useSession } from 'next-auth/react';
@@ -16,6 +16,7 @@ export default function Page() {
 
   const [email, setEmail] = useState('');
   const [isSuccessful, setIsSuccessful] = useState(false);
+  const [isPasswordResetOpen, setIsPasswordResetOpen] = useState(false);
 
   const [state, formAction] = useActionState<LoginActionState, FormData>(
     login,
@@ -28,9 +29,9 @@ export default function Page() {
 
   useEffect(() => {
     if (!state || !state.status) return;
-    
+
     console.log('Login state changed:', state.status);
-    
+
     if (state.status === 'failed') {
       toast({
         type: 'error',
@@ -48,7 +49,7 @@ export default function Page() {
         router.push('/');
       });
     }
-  }, [state?.status, router, isSuccessful, updateSession, session]);
+  }, [state, router, isSuccessful, updateSession, session]);
 
   const handleSubmit = (formData: FormData) => {
     setEmail(formData.get('email') as string);
@@ -65,19 +66,26 @@ export default function Page() {
           </p>
         </div>
         <AuthForm action={handleSubmit} defaultEmail={email}>
-          <SubmitButton isSuccessful={isSuccessful}>Sign in</SubmitButton>
-          <p className="text-center text-sm text-gray-600 mt-4 dark:text-zinc-400">
-            {"Don't have an account? "}
-            <Link
-              href="/register"
-              className="font-semibold text-gray-800 hover:underline dark:text-zinc-200"
-            >
-              Sign up
-            </Link>
-            {' for free.'}
-          </p>
+          <div className="flex flex-col gap-4">
+            <SubmitButton isSuccessful={isSuccessful}>Sign in</SubmitButton>
+            <div className="text-center">
+              <button
+                type="button"
+                onClick={() => setIsPasswordResetOpen(true)}
+                className="text-sm text-blue-600 hover:text-blue-500 dark:text-blue-400 dark:hover:text-blue-300 underline"
+              >
+                Forgot your password?
+              </button>
+            </div>
+          </div>
         </AuthForm>
       </div>
+
+      <PasswordResetForm
+        isOpen={isPasswordResetOpen}
+        onClose={() => setIsPasswordResetOpen(false)}
+        defaultEmail={email}
+      />
     </div>
   );
 }

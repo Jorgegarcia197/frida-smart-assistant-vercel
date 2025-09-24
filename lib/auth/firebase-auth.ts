@@ -223,6 +223,63 @@ export async function validateFirebaseCredentials(
 }
 
 /**
+ * Sends a password reset email to the user
+ */
+export async function sendPasswordResetEmail(email: string): Promise<void> {
+  try {
+    const apiKey = process.env.NEXT_PUBLIC_FIREBASE_API_KEY;
+    if (!apiKey) {
+      throw new ChatSDKError(
+        'bad_request:auth',
+        'Firebase API key not configured',
+      );
+    }
+
+    const response = await fetch(
+      `https://identitytoolkit.googleapis.com/v1/accounts:sendOobCode?key=${apiKey}`,
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          requestType: 'PASSWORD_RESET',
+          email,
+        }),
+      },
+    );
+
+    if (!response.ok) {
+      const error = await response.json();
+      console.error('Password reset email failed:', error);
+
+      if (error.error?.message === 'EMAIL_NOT_FOUND') {
+        throw new ChatSDKError(
+          'bad_request:auth',
+          'No account found with this email address',
+        );
+      }
+
+      throw new ChatSDKError(
+        'bad_request:auth',
+        'Failed to send password reset email',
+      );
+    }
+
+    console.log('Password reset email sent successfully to:', email);
+  } catch (error) {
+    if (error instanceof ChatSDKError) {
+      throw error;
+    }
+    console.error('Password reset email error:', error);
+    throw new ChatSDKError(
+      'bad_request:auth',
+      'Failed to send password reset email',
+    );
+  }
+}
+
+/**
  * Syncs a user from Firebase Auth to Firestore (useful for existing Firebase Auth users)
  */
 export async function syncFirebaseUserToFirestore(uid: string): Promise<User> {

@@ -15,6 +15,10 @@ export interface Chat {
   title: string;
   userId: string;
   visibility: VisibilityType;
+  // Agent data persisted with chat
+  agentId?: string;
+  agentSystemPrompt?: string;
+  agentResponsibilities?: string[];
 }
 
 /** Legacy shape for persisted attachments (AI SDK v4-era). */

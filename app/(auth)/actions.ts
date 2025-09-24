@@ -3,7 +3,10 @@
 import { z } from 'zod/v3';
 
 import { getUser, createUserWithFirebaseAuth } from '@/lib/db/queries';
-import { getFirebaseUser } from '@/lib/auth/firebase-auth';
+import {
+  getFirebaseUser,
+  sendPasswordResetEmail,
+} from '@/lib/auth/firebase-auth';
 
 import { signIn } from './auth';
 
@@ -82,8 +85,11 @@ export const register = async (
     }
 
     // Create user in both Firebase Auth and Firestore
-    await createUserWithFirebaseAuth(validatedData.email, validatedData.password);
-    
+    await createUserWithFirebaseAuth(
+      validatedData.email,
+      validatedData.password,
+    );
+
     // Sign in the user
     await signIn('credentials', {
       email: validatedData.email,
@@ -98,6 +104,46 @@ export const register = async (
     }
 
     console.error('Registration error:', error);
+    return { status: 'failed' };
+  }
+};
+
+export interface PasswordResetActionState {
+  status:
+    | 'idle'
+    | 'in_progress'
+    | 'success'
+    | 'failed'
+    | 'invalid_data'
+    | 'email_not_found';
+}
+
+export const resetPassword = async (
+  _: PasswordResetActionState,
+  formData: FormData,
+): Promise<PasswordResetActionState> => {
+  try {
+    const emailSchema = z.object({
+      email: z.string().email(),
+    });
+
+    const validatedData = emailSchema.parse({
+      email: formData.get('email'),
+    });
+
+    await sendPasswordResetEmail(validatedData.email);
+    return { status: 'success' };
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      return { status: 'invalid_data' };
+    }
+
+    // Check if it's a specific Firebase Auth error
+    if (error instanceof Error && error.message.includes('No account found')) {
+      return { status: 'email_not_found' };
+    }
+
+    console.error('Password reset error:', error);
     return { status: 'failed' };
   }
 };

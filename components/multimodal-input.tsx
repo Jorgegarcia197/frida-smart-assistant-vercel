@@ -18,13 +18,15 @@ import { ArrowUpIcon, PaperclipIcon, StopIcon } from './icons';
 import { PreviewAttachment } from './preview-attachment';
 import { Button } from './ui/button';
 import { SuggestedActions } from './suggested-actions';
+import { useAgent } from './agent-provider';
 import equal from 'fast-deep-equal';
 import type { UseChatHelpers } from '@ai-sdk/react';
 import { AnimatePresence, motion } from 'framer-motion';
-import { ArrowDown, Server } from 'lucide-react';
+import { ArrowDown, PlusIcon, Server } from 'lucide-react';
 import { useScrollToBottom } from '@/hooks/use-scroll-to-bottom';
 import type { VisibilityType } from './visibility-selector';
 import MCPHubContent from './mcp-hub-content';
+import LoadAgentContent from './load-agent-content';
 import type { ChatMessage } from '@/lib/types';
 import type { LegacyAttachment } from '@/lib/db/firebase-types';
 import SidebarPortal from './sidebar-portal';
@@ -114,9 +116,15 @@ function PureMultimodalInput({
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [uploadQueue, setUploadQueue] = useState<Array<string>>([]);
   const [isMCPHubOpen, setIsMCPHubOpen] = useState(false);
+  const [isLoadAgentOpen, setIsLoadAgentOpen] = useState(false);
+
+  const { hasConversationStarted, setHasConversationStarted } = useAgent();
 
   const submitForm = useCallback(() => {
     window.history.replaceState({}, '', `/chat/${chatId}`);
+
+    // Mark conversation as started when sending a message
+    setHasConversationStarted(true);
 
     sendMessage({
       role: 'user',
@@ -150,6 +158,7 @@ function PureMultimodalInput({
     setAttachments,
     setInput,
     setLocalStorageInput,
+    setHasConversationStarted,
     width,
   ]);
 
@@ -323,6 +332,7 @@ function PureMultimodalInput({
         <PromptInputToolbar className="px-4 py-2 !border-t-0 !border-top-0 shadow-none dark:!border-transparent dark:border-0">
           <PromptInputTools className="gap-2">
             <AttachmentsButton fileInputRef={fileInputRef} status={status} />
+
             <Button
               variant="ghost"
               className="rounded-md rounded-bl-lg p-[7px] h-fit dark:border-zinc-700 hover:dark:bg-zinc-900 hover:bg-zinc-200"
@@ -334,12 +344,33 @@ function PureMultimodalInput({
             >
               <Server className="size-4" />
             </Button>
-
+            <Button
+              variant="ghost"
+              className="rounded-md rounded-bl-lg p-[7px] h-fit dark:border-zinc-700 hover:dark:bg-zinc-900 hover:bg-zinc-200"
+              onClick={(e) => {
+                e.preventDefault();
+                setIsLoadAgentOpen(true);
+              }}
+              disabled={status !== 'ready' || hasConversationStarted}
+              title={
+                hasConversationStarted
+                  ? 'Cannot change agent mid-conversation'
+                  : 'Load Agent'
+              }
+            >
+              <PlusIcon className="size-4" />
+            </Button>
             <SidebarPortal
               isOpen={isMCPHubOpen}
               onClose={() => setIsMCPHubOpen(false)}
             >
               <MCPHubContent setIsMCPHubOpen={setIsMCPHubOpen} />
+            </SidebarPortal>
+            <SidebarPortal
+              isOpen={isLoadAgentOpen}
+              onClose={() => setIsLoadAgentOpen(false)}
+            >
+              <LoadAgentContent setIsLoadAgentOpen={setIsLoadAgentOpen} />
             </SidebarPortal>
           </PromptInputTools>
           {status === 'submitted' ? (

@@ -124,12 +124,19 @@ function jsonSchemaPropertyToZod(property: any): z.ZodTypeAny {
 }
 
 // Helper function to get MCP tools for the AI SDK
-async function getMcpToolsForAI(userId: string) {
+async function getMcpToolsForAI(
+  userId: string,
+  agentMcpConfig?: any,
+  agentKnowledgeBaseIds?: string[],
+) {
   const mcpTools: Record<string, any> = {};
   const mcpActiveTools: string[] = [];
 
   try {
     console.log('🔧 Getting MCP client instance for user:', userId);
+    console.log('🔧 Agent MCP config:', agentMcpConfig);
+    console.log('🔧 Agent knowledge base IDs:', agentKnowledgeBaseIds);
+
     const mcpClient = getMcpClientInstance(userId);
 
     if (!mcpClient || mcpClient.isConnecting) {
@@ -141,7 +148,13 @@ async function getMcpToolsForAI(userId: string) {
     if (mcpClient.connections.length === 0) {
       console.log('🔧 No connections found, initializing MCP servers...');
       try {
-        await mcpClient.initializeMcpServers();
+        // If agent has MCP config, merge it with user's MCP config
+        if (agentMcpConfig?.mcpServers) {
+          console.log('🔧 Merging agent MCP servers with user MCP servers');
+          await mcpClient.initializeMcpServersWithAgentConfig(agentMcpConfig);
+        } else {
+          await mcpClient.initializeMcpServers();
+        }
         console.log('✅ MCP servers initialization completed');
       } catch (initError) {
         console.warn('⚠️ MCP server initialization failed:', initError);
@@ -227,10 +240,25 @@ async function getMcpToolsForAI(userId: string) {
       }
     }
 
-    console.log('🔧 MCP tools ready:', mcpActiveTools);
+    // Add knowledge base search tool if agent has knowledge base IDs
+    if (agentKnowledgeBaseIds && agentKnowledgeBaseIds.length > 0) {
+      console.log('🔧 Adding knowledge base search tool for agent');
+      const { searchKnowledgeBaseTool } = await import(
+        '@/lib/ai/tools/search-knowledge-base'
+      );
+
+      mcpTools.knowledge_base_search = searchKnowledgeBaseTool(
+        agentKnowledgeBaseIds,
+      );
+      mcpActiveTools.push('knowledge_base_search');
+
+      console.log('🔧 Knowledge base search tool added');
+    }
+
+    console.log('🔧 All tools ready:', mcpActiveTools);
     return { mcpTools, mcpActiveTools };
   } catch (error) {
-    console.error('❌ Failed to initialize MCP tools:', error);
+    console.error('❌ Failed to initialize tools:', error);
     return { mcpTools, mcpActiveTools };
   }
 }
@@ -241,6 +269,7 @@ export async function POST(request: Request) {
 
   try {
     const json = await request.json();
+    console.log('🔧 Raw JSON received:', JSON.stringify(json, null, 2));
     requestBody = postRequestBodySchema.parse(json);
   } catch (error) {
     console.error('❌ Request parsing/validation failed:', error);
@@ -257,8 +286,22 @@ export async function POST(request: Request) {
   }
 
   try {
-    const { id, message, selectedChatModel, selectedVisibilityType } =
-      requestBody;
+    const {
+      id,
+      message,
+      selectedChatModel,
+      selectedVisibilityType,
+      agentSystemPrompt,
+      agentResponsibilities,
+      agentMcpConfig,
+      agentKnowledgeBaseIds,
+    } = requestBody;
+    console.log('🔧 Request Body received:', requestBody);
+
+    console.log('🔧 Agent System Prompt received:', agentSystemPrompt);
+    console.log('🔧 Agent Responsibilities received:', agentResponsibilities);
+    console.log('🔧 Agent MCP Config received:', agentMcpConfig);
+    console.log('🔧 Agent Knowledge Base IDs received:', agentKnowledgeBaseIds);
 
     const session = await auth();
     if (!session?.user) {
@@ -279,8 +322,14 @@ export async function POST(request: Request) {
         userId: session.user.id,
         title,
         visibility: selectedVisibilityType,
+        // Save agent data if provided
+        agentSystemPrompt,
+        agentResponsibilities,
       });
-      console.log('✅ New chat saved');
+      console.log('✅ New chat saved with agent data:', {
+        agentSystemPrompt,
+        agentResponsibilities,
+      });
     } else {
       console.log('📂 Using existing chat');
       if (chat.userId !== session.user.id) {
@@ -317,16 +366,28 @@ export async function POST(request: Request) {
     const streamId = generateUUID();
     await createStreamId({ streamId, chatId: id });
 
-    // Get MCP tools for this user
+    // Get MCP tools for this user (with agent MCP config and knowledge base IDs if provided)
     const { mcpTools, mcpActiveTools } = await getMcpToolsForAI(
       session.user.id,
+      agentMcpConfig,
+      agentKnowledgeBaseIds,
     );
 
     const stream = createUIMessageStream({
       execute: ({ writer: dataStream }) => {
+        const systemPromptText = systemPrompt({
+          selectedChatModel,
+          requestHints,
+          agentSystemPrompt,
+          agentResponsibilities,
+          agentKnowledgeBaseIds,
+        });
+
+        console.log('🔧 System Prompt:', systemPromptText);
+
         const result = streamText({
           model: myProvider.languageModel(selectedChatModel),
-          system: systemPrompt({ selectedChatModel, requestHints }),
+          system: systemPromptText,
           messages: convertToModelMessages(uiMessages),
           stopWhen: stepCountIs(5),
 

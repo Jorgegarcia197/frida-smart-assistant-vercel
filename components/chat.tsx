@@ -1,7 +1,7 @@
 'use client';
 
 import { useChat } from '@ai-sdk/react';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import useSWR, { useSWRConfig } from 'swr';
 import { ChatHeader } from '@/components/chat-header';
 import type { Vote } from '@/lib/db/firebase-types';
@@ -22,6 +22,7 @@ import { ChatSDKError } from '@/lib/errors';
 import type { Attachment, ChatMessage } from '@/lib/types';
 import { useDataStream } from './data-stream-provider';
 import { DefaultChatTransport } from 'ai';
+import { useAgent } from './agent-provider';
 
 export function Chat({
   id,
@@ -31,6 +32,7 @@ export function Chat({
   isReadonly,
   session,
   autoResume,
+  initialAgentData,
 }: {
   id: string;
   initialMessages: ChatMessage[];
@@ -39,9 +41,49 @@ export function Chat({
   isReadonly: boolean;
   session: Session;
   autoResume: boolean;
+  initialAgentData?: {
+    agentId?: string;
+    agentSystemPrompt?: string;
+    agentResponsibilities?: string[];
+    agentMcpConfig?: any;
+    agentKnowledgeBaseIds?: string[];
+  };
 }) {
   const { mutate } = useSWRConfig();
   const { setDataStream } = useDataStream();
+  const { currentAgent } = useAgent();
+
+  // Debug logging for agent context
+  console.log('🔧 Chat component - currentAgent from context:', currentAgent);
+  console.log(
+    '🔧 Chat component - currentAgent systemPrompt:',
+    currentAgent?.systemPrompt,
+  );
+  console.log(
+    '🔧 Chat component - currentAgent responsibilities:',
+    currentAgent?.responsibilities,
+  );
+
+  // Create a stable reference to agent data that won't change during the request
+  const agentDataRef = useRef<{
+    agentSystemPrompt?: string;
+    agentResponsibilities?: string[];
+    agentMcpConfig?: any;
+    agentKnowledgeBaseIds?: string[];
+  }>({});
+
+  // Update the ref whenever currentAgent changes
+  useEffect(() => {
+    if (currentAgent) {
+      agentDataRef.current = {
+        agentSystemPrompt: currentAgent.systemPrompt,
+        agentResponsibilities: currentAgent.responsibilities,
+        agentMcpConfig: currentAgent.mcps,
+        agentKnowledgeBaseIds: currentAgent.knowledgeBaseIds,
+      };
+      console.log('🔧 Agent data ref updated:', agentDataRef.current);
+    }
+  }, [currentAgent]);
 
   const [input, setInput] = useState<string>('');
 
@@ -66,15 +108,42 @@ export function Chat({
     transport: new DefaultChatTransport({
       api: '/api/chat',
       fetch: fetchWithErrorHandlers,
-      prepareSendMessagesRequest({ messages, id, body }) {
+      prepareSendMessagesRequest({ messages, id }) {
+        console.log('🔧 prepareSendMessagesRequest called!');
+        console.log('🔧 Current agent:', currentAgent);
+        console.log('🔧 Initial agent data:', initialAgentData);
+        console.log('🔧 Agent data ref:', agentDataRef.current);
+
+        // Use agentDataRef if it has data, otherwise fall back to initialAgentData
+        const agentData =
+          Object.keys(agentDataRef.current).length > 0
+            ? agentDataRef.current
+            : initialAgentData
+              ? {
+                  agentSystemPrompt: initialAgentData.agentSystemPrompt,
+                  agentResponsibilities: initialAgentData.agentResponsibilities,
+                  agentMcpConfig: initialAgentData.agentMcpConfig,
+                  agentKnowledgeBaseIds: initialAgentData.agentKnowledgeBaseIds,
+                }
+              : {};
+
+        console.log('🔧 Agent data being sent:', agentData);
+
+        const requestBody = {
+          id,
+          message: messages.at(-1),
+          selectedChatModel: initialChatModel,
+          selectedVisibilityType: visibilityType,
+          ...agentData,
+        };
+
+        console.log(
+          '🔧 Final request body:',
+          JSON.stringify(requestBody, null, 2),
+        );
+
         return {
-          body: {
-            id,
-            message: messages.at(-1),
-            selectedChatModel: initialChatModel,
-            selectedVisibilityType: visibilityType,
-            ...body,
-          },
+          body: requestBody,
         };
       },
     }),

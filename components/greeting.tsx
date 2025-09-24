@@ -1,6 +1,24 @@
 import { motion } from 'framer-motion';
+import { useAgent } from './agent-provider';
 
 export const Greeting = () => {
+  const { currentAgent } = useAgent();
+
+  // Get a random greeting from the agent, or use default
+  const getGreeting = () => {
+    if (currentAgent?.greetings && currentAgent.greetings.length > 0) {
+      const randomIndex = Math.floor(
+        Math.random() * currentAgent.greetings.length,
+      );
+      return (
+        currentAgent.greetings[randomIndex]?.text || 'How can I help you today?'
+      );
+    }
+    return 'How can I help you today?';
+  };
+
+  const greetingText = getGreeting();
+
   return (
     <div
       key="overview"
@@ -13,7 +31,7 @@ export const Greeting = () => {
         transition={{ delay: 0.5 }}
         className="text-2xl font-semibold"
       >
-        How can I help you today?
+        {greetingText}
       </motion.div>
       <motion.div
         initial={{ opacity: 0, y: 10 }}
@@ -21,8 +39,7 @@ export const Greeting = () => {
         exit={{ opacity: 0, y: 10 }}
         transition={{ delay: 0.6 }}
         className="text-2xl text-zinc-500"
-      >
-      </motion.div>
+      />
     </div>
   );
 };
