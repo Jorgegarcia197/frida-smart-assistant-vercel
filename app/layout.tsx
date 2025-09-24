@@ -70,7 +70,6 @@ export default async function RootLayout({
             __html: THEME_COLOR_SCRIPT,
           }}
         />
-
       </head>
       <body className="antialiased">
         <ThemeProvider
@@ -80,11 +79,9 @@ export default async function RootLayout({
           disableTransitionOnChange
         >
           <Toaster position="top-center" />
-          <SessionProvider>
-            {children}
-          </SessionProvider>
+          <SessionProvider>{children}</SessionProvider>
         </ThemeProvider>
-        <Script 
+        <Script
           src="https://cdn.jsdelivr.net/pyodide/v0.23.4/full/pyodide.js"
           strategy="beforeInteractive"
         />

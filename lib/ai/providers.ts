@@ -20,21 +20,27 @@ const azure = createAzure({
 });
 
 const bedrock = createAmazonBedrock({
-  region: process.env.NEXT_PUBLIC_AWS_REGION || 'us-east-2',
-  accessKeyId: process.env.NEXT_PUBLIC_AWS_ACCESS_KEY_ID || '',
-  secretAccessKey: process.env.NEXT_PUBLIC_AWS_SECRET_ACCESS_KEY || '',
-  sessionToken: process.env.NEXT_PUBLIC_AWS_SESSION_TOKEN || undefined,
+  region: process.env.AWS_REGION || 'us-east-2',
+  accessKeyId: process.env.AWS_ACCESS_KEY_ID || '',
+  secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY || '',
 });
 
 // Debug logging for Bedrock configuration
 console.log('Bedrock Configuration Debug:');
-console.log('Region:', process.env.NEXT_PUBLIC_AWS_REGION);
-console.log('Access Key ID:', process.env.NEXT_PUBLIC_AWS_ACCESS_KEY_ID);
+console.log('Region:', process.env.AWS_REGION);
+console.log(
+  'Access Key ID:',
+  process.env.AWS_ACCESS_KEY_ID ? '***SET***' : 'NOT SET',
+);
 console.log(
   'Secret Access Key:',
-  process.env.NEXT_PUBLIC_AWS_SECRET_ACCESS_KEY,
+  process.env.AWS_SECRET_ACCESS_KEY ? '***SET***' : 'NOT SET',
 );
-console.log('Model ID:', process.env.NEXT_PUBLIC_AWS_MODEL_ID);
+console.log(
+  'Session Token:',
+  process.env.AWS_SESSION_TOKEN ? '***SET***' : 'NOT SET',
+);
+console.log('Model ID:', process.env.AWS_MODEL_ID);
 console.log('Is Test Environment:', isTestEnvironment);
 
 export const myProvider = isTestEnvironment
@@ -53,9 +59,9 @@ export const myProvider = isTestEnvironment
     })
   : customProvider({
       languageModels: {
-        'chat-model': bedrock(process.env.NEXT_PUBLIC_AWS_MODEL_ID || ''),
+        'chat-model': bedrock(process.env.AWS_MODEL_ID || ''),
         'chat-model-reasoning': wrapLanguageModel({
-          model: bedrock(process.env.NEXT_PUBLIC_AWS_MODEL_ID || ''),
+          model: bedrock(process.env.AWS_MODEL_ID || ''),
           middleware: extractReasoningMiddleware({ tagName: 'think' }),
         }),
         'title-model': azure('Innovation-gpt4o-mini'),
