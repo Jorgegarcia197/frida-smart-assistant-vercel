@@ -117,6 +117,69 @@ export class MCPClient {
   }
 
   /**
+   * Initializes MCP servers by merging agent MCP config with user's MCP config.
+   */
+  public async initializeMcpServersWithAgentConfig(
+    agentMcpConfig: any,
+  ): Promise<void> {
+    try {
+      // Get user's existing MCP config
+      const userMcpConfig = await getMcpServers(this.userId);
+
+      console.log(
+        '[MCPClient] User MCP servers config:',
+        JSON.stringify(userMcpConfig, null, 2),
+      );
+
+      console.log(
+        '[MCPClient] Agent MCP servers config:',
+        JSON.stringify(agentMcpConfig, null, 2),
+      );
+
+      // Merge agent MCP servers with user MCP servers
+      // Agent MCPs take precedence if there are conflicts
+      const mergedMcpServers = {
+        ...userMcpConfig.mcpServers,
+        ...agentMcpConfig.mcpServers,
+      };
+
+      const mergedConfig = {
+        mcpServers: mergedMcpServers,
+      };
+
+      console.log(
+        '[MCPClient] Merged MCP servers config:',
+        JSON.stringify(mergedConfig, null, 2),
+      );
+
+      if (Object.keys(mergedMcpServers).length > 0) {
+        await this.updateServerConnections(mergedMcpServers);
+        console.log(
+          `[MCPClient] Successfully initialized ${Object.keys(mergedMcpServers).length} MCP server(s) (merged with agent config) for user ${this.userId}`,
+        );
+        console.log(
+          `[MCPClient] Current connections after init:`,
+          this.connections.map((c) => ({
+            name: c.server.name,
+            status: c.server.status,
+            disabled: c.server.disabled,
+          })),
+        );
+      } else {
+        console.log(
+          `[MCPClient] No MCP servers found to initialize for user ${this.userId}`,
+        );
+      }
+    } catch (error) {
+      console.error(
+        `[MCPClient] Error during MCP server initialization with agent config for user ${this.userId}:`,
+        error,
+      );
+      throw error; // Re-throw to trigger retry logic
+    }
+  }
+
+  /**
    * Returns an array of all MCP servers (both enabled and disabled).
    * @returns Array of all McpServer objects
    */

@@ -53,16 +53,42 @@ About the origin of user's request:
 export const systemPrompt = ({
   selectedChatModel,
   requestHints,
+  agentSystemPrompt,
+  agentResponsibilities,
+  agentKnowledgeBaseIds,
 }: {
   selectedChatModel: string;
   requestHints: RequestHints;
+  agentSystemPrompt?: string;
+  agentResponsibilities?: string[];
+  agentKnowledgeBaseIds?: string[];
 }) => {
   const requestPrompt = getRequestPromptFromHints(requestHints);
+  console.log('🔧 Request Prompt:', requestPrompt);
+
+  // Use agent system prompt if provided, otherwise use regular prompt
+  const basePrompt = agentSystemPrompt || regularPrompt;
+  console.log('🔧 Base Prompt:', basePrompt);
+
+  // Add responsibilities if provided
+  const responsibilitiesSection =
+    agentResponsibilities && agentResponsibilities.length > 0
+      ? `\n\nResponsibilities:\n${agentResponsibilities.map((r) => `- ${r}`).join('\n')}`
+      : '';
+
+  // Add knowledge base search capability if agent has knowledge base IDs
+  const knowledgeBaseSection =
+    agentKnowledgeBaseIds && agentKnowledgeBaseIds.length > 0
+      ? `\n\nKnowledge Base Access:\nYou have access to search through ${agentKnowledgeBaseIds.length} knowledge base(s) for this agent. Use the \`knowledge_base_search\` tool to search for relevant information from the agent's knowledge bases when users ask questions that might benefit from specific documentation or knowledge.\n\nKnowledge Base IDs: ${agentKnowledgeBaseIds.join(', ')}`
+      : '';
+
+  console.log('🔧 Responsibilities Section:', responsibilitiesSection);
+  console.log('🔧 Knowledge Base Section:', knowledgeBaseSection);
 
   if (selectedChatModel === 'chat-model-reasoning') {
-    return `${regularPrompt}\n\n${requestPrompt}`;
+    return `${basePrompt}${responsibilitiesSection}${knowledgeBaseSection}\n\n${requestPrompt}`;
   } else {
-    return `${regularPrompt}\n\n${requestPrompt}\n\n${artifactsPrompt}`;
+    return `${basePrompt}${responsibilitiesSection}${knowledgeBaseSection}\n\n${requestPrompt}\n\n${artifactsPrompt}`;
   }
 };
 

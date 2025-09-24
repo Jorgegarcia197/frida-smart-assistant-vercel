@@ -218,22 +218,38 @@ export async function saveChat({
   userId,
   title,
   visibility,
+  agentId,
+  agentSystemPrompt,
+  agentResponsibilities,
 }: {
   id: string;
   userId: string;
   title: string;
   visibility: VisibilityType;
+  agentId?: string;
+  agentSystemPrompt?: string;
+  agentResponsibilities?: string[];
 }) {
   try {
-    await db
-      .collection('chats')
-      .doc(id)
-      .set({
-        userId,
-        title,
-        visibility,
-        createdAt: dateToTimestamp(new Date()),
-      });
+    const chatData: any = {
+      userId,
+      title,
+      visibility,
+      createdAt: dateToTimestamp(new Date()),
+    };
+
+    // Add agent data if provided
+    if (agentId) {
+      chatData.agentId = agentId;
+    }
+    if (agentSystemPrompt) {
+      chatData.agentSystemPrompt = agentSystemPrompt;
+    }
+    if (agentResponsibilities && agentResponsibilities.length > 0) {
+      chatData.agentResponsibilities = agentResponsibilities;
+    }
+
+    await db.collection('chats').doc(id).set(chatData);
   } catch (error) {
     throw new ChatSDKError('bad_request:database', 'Failed to save chat');
   }

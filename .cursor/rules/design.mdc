@@ -1,0 +1,181 @@
+---
+alwaysApply: false
+globs: **/*.tsx, **/*.ts, src/**/*.ts, src/**/*.tsx
+---
+# UI & Visual Design Guidelines for TSX Components
+
+These rules apply specifically to front-end UI code (.tsx files) and guide developers to treat code and design with equal care. Emphasize clear component composition, a consistent design language, and responsive accessible layouts. Follow the project's Shadcn UI design system (built on Tailwind CSS) for styling conventions, and do not apply these rules to backend or API code.
+
+## Component Architecture & Composition
+
+### Small, Reusable Components
+
+Break complex UIs into small, focused components (Composite component pattern). Compose higher-level screens from building blocks (e.g. `<Header>`, `<Card>`, `<Form>`). This improves maintainability, reusability, and clarity.
+
+### Single Responsibility Principle
+
+Each component should do one thing. Accept props for content and behavior, not for arbitrary styling (avoid props like `titleColor` or `customPadding` that mix design and logic). For example, give components a `className` or use design tokens for style, rather than passing style values as props.
+
+### Use Composition Over Duplication
+
+Reuse existing Shadcn UI components or your own atomic components instead of writing new markup or styles. For example, assemble a card layout by composing `<Card>`, `<CardHeader>`, `<CardBody>` rather than a single monolithic component.
+
+**Example**: Create a PostCard component for a blog post preview. Each PostCard might be built from smaller pieces (`<Card>`, `<Image>`, `<Typography>`). This makes it easy to reuse PostCard and tweak just its props without copying code.
+
+```tsx
+// Good: Reusable Card component with content props
+function PostCard({ title, excerpt }: { title: string; excerpt: string }) {
+  return (
+    <Card className="max-w-md mx-auto">
+      <h3 className="text-xl font-bold mb-2">{title}</h3>
+      <p className="text-gray-600">{excerpt}</p>
+    </Card>
+  );
+}
+```
+
+## Semantic Markup & Accessibility
+
+### Semantic HTML
+
+Use HTML elements for their intended purpose (e.g. `<header>`, `<nav>`, `<main>`, `<footer>`, `<section>`, `<button>`). Semantic tags often provide built-in accessibility. For example, use `<nav>` for navigation bars and `<button>` for clickable actions (not `<div>`).
+
+### ARIA and Roles
+
+If you need custom widgets, add appropriate ARIA attributes and roles (e.g. `role="dialog"`, `aria-label`) to inform assistive technologies. React fully supports ARIA in JSX (e.g. `<input aria-label="Search" />`).
+
+### Keyboard Support
+
+Ensure all interactive components (buttons, links, form fields, modals, etc.) are operable with the keyboard. Maintain logical focus order and visible focus outlines (do not remove focus outlines unless you replace them).
+
+### WCAG Compliance
+
+Follow WCAG guidelines. For example, provide accessible labels on form controls (using `<label>` with `htmlFor` or `aria-label`) and ensure meaningful error messages. Always meet basic contrast and accessibility checks.
+
+## Layout, Spacing & Responsiveness
+
+### Mobile-First, Responsive Design
+
+Use Tailwind's responsive prefixes (`sm:`, `md:`, etc.) to build mobile-first layouts. Start with a single-column layout and add breakpoints for larger screens. For example, `<div className="flex flex-col md:flex-row">` stacks vertically on small screens and horizontally on medium+ screens.
+
+### Flexible Layouts
+
+Use Flexbox or CSS Grid utilities for structure (`flex`, `grid`, `items-*`, `justify-*`, `gap-*`). Wrap containers (`max-w-lg`, `p-4`, etc.) to constrain content width. Center or align elements using utility classes (`mx-auto`, `items-center`, etc.).
+
+### Consistent Spacing
+
+Align to a consistent baseline grid (commonly an 8px unit). Use Tailwind spacing classes (`p-4`, `mt-2`, `gap-6`, etc.) to apply multiples of the base unit. This ensures a coherent rhythm. For example, use `p-4` (16px) rather than arbitrary values.
+
+**Example**: A responsive two-column layout with consistent gaps. The vertical margin and gap utilities maintain even spacing on all breakpoints.
+
+```tsx
+<div className="flex flex-col md:flex-row gap-4">
+  <Sidebar className="md:w-1/4" />
+  <MainContent className="md:flex-1" />
+</div>
+```
+
+### Visual Rhythm
+
+Maintain vertical rhythm by repeating spacing units. For instance, if headings have `mb-4`, paragraphs might have `mb-6`, ensuring consistent gaps between sections.
+
+## Color & Theming
+
+### Theme Colors
+
+Use the project's design tokens or theme palette (e.g. Tailwind's `text-primary`, `bg-secondary`) rather than hardcoded colors. This ensures consistency and easier theming. Customize colors in `tailwind.config.js` and refer to them by semantic names (`primary`, `accent`, `background`, etc.).
+
+### Contrast & Accessibility
+
+Ensure text and UI elements meet accessible contrast ratios. WCAG recommends at least 4.5:1 contrast for normal text and 3:1 for large text. Use tools (like Chrome DevTools or online checkers) to verify contrast.
+
+### Dark Mode
+
+Support dark mode using Tailwind's `dark:` variants. For example, `bg-white dark:bg-gray-900`. Maintain contrast in both light and dark themes. Respect user's system preference by including `dark:` styles and toggling with a media query or class.
+
+**Example**: Using theme and dark mode. The classes below adapt automatically in dark mode while keeping text readable.
+
+```tsx
+<button className="bg-primary text-primary-foreground px-4 py-2 rounded dark:bg-primary/80">
+  Submit
+</button>
+```
+
+### No Inline Styling
+
+Avoid inline style attributes or custom hex codes in components. Instead use the theme (e.g. `bg-red-500`) or extend the theme in Tailwind config if a new color is needed.
+
+## Typography & Hierarchy
+
+### Typographic Scale
+
+Define a clear scale for text sizes. For example, with an 8px base, you might use 16px for body text (`text-base`), 24px for subheads (`text-xl`), 32px for headings (`text-2xl`), etc. Tailwind's `text-sm/base/lg/xl` classes help enforce this. Use consistent line-heights (e.g. `leading-relaxed`).
+
+### Semantic Headings
+
+Use `<h1>` through `<h6>` for headings to convey structure. Only one `<h1>` per page. Size headings using classes like `text-3xl font-bold`, while paragraph text might be `text-base leading-7`. This enforces a visual hierarchy and accessible structure.
+
+### Readable Text
+
+Ensure adequate line height (1.5× font size is a good default). Avoid large blocks of text without breaks. Use Tailwind's typography plugin or prose classes for rich text.
+
+**Example**: Consistent heading and body styles. Each level uses a preset size.
+
+```tsx
+<article className="prose dark:prose-invert">
+  <h1>Page Title</h1>
+  <p>Introductory paragraph with base text size and line-height.</p>
+  <h2>Section Heading</h2>
+  <p>More content...</p>
+</article>
+```
+
+## Shadcn UI Conventions
+
+### Use Shadcn Components
+
+Whenever possible, use pre-built Shadcn UI components (in `@/components/ui/*`). These components follow a unified design. For example, import and use `<Button>` from Shadcn instead of writing your own button markup.
+
+### Minimal Customization
+
+Do not override Shadcn components unless necessary. Instead of modifying a component's styles, prefer props and utility classes. For example, good: `import { Button } from "@/components/ui/button"; <Button className="bg-blue-500">Click</Button>`; bad: creating a styled wrapper that changes internal styles.
+
+### Class Utilities
+
+Use the provided `cn()` (className) utility to merge conditional Tailwind classes. For dynamic variants, use Shadcn's patterns with `cva` (class-variance-authority) to define consistent style variants for a component.
+
+### Theming
+
+Leverage Shadcn's theming (often in `globals.css`) with CSS variables. For example, use theme variables like `var(--primary)` if defined. Support light/dark by using CSS variables that change under `dark:`.
+
+**Example**: Correct use of a Shadcn Button.
+
+```tsx
+import { Button } from "@/components/ui/button";
+
+export function SaveButton() {
+  return (
+    <Button className="bg-primary text-primary-foreground hover:bg-primary/90">
+      Save Changes
+    </Button>
+  );
+}
+```
+
+## Consistency & Best Practices
+
+### Design System Adherence
+
+Align with the project's design system. This means using the same font family, color palette, spacing scale, and component styles everywhere. Avoid mixing in styles from other libraries or custom CSS that conflicts.
+
+### Naming & Conventions
+
+Follow established coding conventions (e.g. camelCase for variables/props, kebab-case for CSS classes). Keep CSS classes in a consistent order (layout, spacing, typography, color, effects) for readability.
+
+### Responsive Testing
+
+Test layouts on multiple screen sizes. Ensure no overflow or misaligned elements. Use browser dev tools to emulate devices.
+
+### Documentation
+
+Document new components and patterns. For example, add JSDoc comments for props or include usage examples in Storybook. This helps maintain consistency when other developers use the component.
