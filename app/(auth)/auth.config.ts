@@ -10,4 +10,7 @@ export const authConfig = {
     // while this file is also used in non-Node.js environments
   ],
   callbacks: {},
+  session: {
+    strategy: 'jwt',
+  },
 } satisfies NextAuthConfig;

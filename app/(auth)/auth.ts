@@ -1,8 +1,11 @@
 import { compare } from 'bcrypt-ts';
 import NextAuth, { type DefaultSession } from 'next-auth';
 import Credentials from 'next-auth/providers/credentials';
-import { createGuestUser, getUser } from '@/lib/db/queries';
-import { syncFirebaseUserToFirestore, validateFirebaseCredentials } from '@/lib/auth/firebase-auth';
+import { getUser } from '@/lib/db/queries';
+import {
+  syncFirebaseUserToFirestore,
+  validateFirebaseCredentials,
+} from '@/lib/auth/firebase-auth';
 import { authConfig } from './auth.config';
 import { DUMMY_PASSWORD } from '@/lib/constants';
 import type { DefaultJWT } from 'next-auth/jwt';
@@ -43,23 +46,33 @@ export const {
       credentials: {},
       async authorize({ email, password }: any) {
         console.log('NextAuth authorize called for:', email);
-        
+
         // First try to validate credentials with Firebase Auth
         const firebaseUser = await validateFirebaseCredentials(email, password);
-        
+
         if (firebaseUser) {
-          console.log('Firebase Auth validation successful, syncing to Firestore...');
+          console.log(
+            'Firebase Auth validation successful, syncing to Firestore...',
+          );
           // If Firebase Auth validation succeeds, sync to Firestore if needed
           try {
-            const syncedUser = await syncFirebaseUserToFirestore(firebaseUser.uid);
+            const syncedUser = await syncFirebaseUserToFirestore(
+              firebaseUser.uid,
+            );
             console.log('User sync successful, returning user object');
-            return { id: firebaseUser.uid, email: firebaseUser.email, type: 'regular' };
+            return {
+              id: firebaseUser.uid,
+              email: firebaseUser.email,
+              type: 'regular',
+            };
           } catch (error) {
             console.error('Firebase sync error:', error);
             return null;
           }
         } else {
-          console.log('Firebase Auth validation failed, trying Firestore fallback...');
+          console.log(
+            'Firebase Auth validation failed, trying Firestore fallback...',
+          );
         }
 
         // Fallback to Firestore-only users (for backward compatibility)
@@ -88,19 +101,12 @@ export const {
         return { ...user, type: 'regular' };
       },
     }),
-    Credentials({
-      id: 'guest',
-      credentials: {},
-      async authorize() {
-        const [guestUser] = await createGuestUser();
-        return { ...guestUser, type: 'guest' };
-      },
-    }),
   ],
   callbacks: {
     async jwt({ token, user }) {
       if (user) {
         token.id = user.id as string;
+        token.email = user.email;
         token.type = user.type;
       }
 
