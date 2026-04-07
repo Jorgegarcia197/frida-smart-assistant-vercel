@@ -24,6 +24,19 @@ import { useDataStream } from './data-stream-provider';
 import { DefaultChatTransport } from 'ai';
 import { useAgent } from './agent-provider';
 
+/** Match server + ModelSelector; avoids stale `initialChatModel` after client-side model change. */
+function readChatModelCookie(fallback: string): string {
+  if (typeof document === 'undefined') return fallback;
+  const match = document.cookie.match(/(?:^|;\s*)chat-model=([^;]+)/);
+  if (!match?.[1]) return fallback;
+  try {
+    const v = decodeURIComponent(match[1].trim());
+    return v === 'chat-model' || v === 'chat-model-reasoning' ? v : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
 export function Chat({
   id,
   initialMessages,
@@ -53,37 +66,26 @@ export function Chat({
   const { setDataStream } = useDataStream();
   const { currentAgent } = useAgent();
 
-  // Debug logging for agent context
-  console.log('🔧 Chat component - currentAgent from context:', currentAgent);
-  console.log(
-    '🔧 Chat component - currentAgent systemPrompt:',
-    currentAgent?.systemPrompt,
-  );
-  console.log(
-    '🔧 Chat component - currentAgent responsibilities:',
-    currentAgent?.responsibilities,
-  );
-
-  // Create a stable reference to agent data that won't change during the request
+  // Refs read inside prepareSendMessagesRequest (Chat keeps the initial transport from
+  // the first render, so we rely on refs — updated every render so sends never race useEffect).
   const agentDataRef = useRef<{
     agentSystemPrompt?: string;
     agentResponsibilities?: string[];
     agentMcpConfig?: any;
     agentKnowledgeBaseIds?: string[];
   }>({});
+  const visibilityTypeRef = useRef(initialVisibilityType);
 
-  // Update the ref whenever currentAgent changes
-  useEffect(() => {
-    if (currentAgent) {
-      agentDataRef.current = {
-        agentSystemPrompt: currentAgent.systemPrompt,
-        agentResponsibilities: currentAgent.responsibilities,
-        agentMcpConfig: currentAgent.mcps,
-        agentKnowledgeBaseIds: currentAgent.knowledgeBaseIds,
-      };
-      console.log('🔧 Agent data ref updated:', agentDataRef.current);
-    }
-  }, [currentAgent]);
+  if (currentAgent) {
+    agentDataRef.current = {
+      agentSystemPrompt: currentAgent.systemPrompt,
+      agentResponsibilities: currentAgent.responsibilities,
+      agentMcpConfig: currentAgent.mcps,
+      agentKnowledgeBaseIds: currentAgent.knowledgeBaseIds,
+    };
+  } else {
+    agentDataRef.current = {};
+  }
 
   const [input, setInput] = useState<string>('');
 
@@ -91,6 +93,8 @@ export function Chat({
     chatId: id,
     initialVisibilityType,
   });
+
+  visibilityTypeRef.current = visibilityType;
 
   const {
     messages,
@@ -109,11 +113,6 @@ export function Chat({
       api: '/api/chat',
       fetch: fetchWithErrorHandlers,
       prepareSendMessagesRequest({ messages, id }) {
-        console.log('🔧 prepareSendMessagesRequest called!');
-        console.log('🔧 Current agent:', currentAgent);
-        console.log('🔧 Initial agent data:', initialAgentData);
-        console.log('🔧 Agent data ref:', agentDataRef.current);
-
         // Use agentDataRef if it has data, otherwise fall back to initialAgentData
         const agentData =
           Object.keys(agentDataRef.current).length > 0
@@ -127,20 +126,13 @@ export function Chat({
                 }
               : {};
 
-        console.log('🔧 Agent data being sent:', agentData);
-
         const requestBody = {
           id,
           message: messages.at(-1),
-          selectedChatModel: initialChatModel,
-          selectedVisibilityType: visibilityType,
+          selectedChatModel: readChatModelCookie(initialChatModel),
+          selectedVisibilityType: visibilityTypeRef.current,
           ...agentData,
         };
-
-        console.log(
-          '🔧 Final request body:',
-          JSON.stringify(requestBody, null, 2),
-        );
 
         return {
           body: requestBody,

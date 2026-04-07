@@ -12,7 +12,14 @@ import { myProvider } from '@/lib/ai/providers';
 
 export async function saveChatModelAsCookie(model: string) {
   const cookieStore = await cookies();
-  cookieStore.set('chat-model', model);
+  // Must be readable by client JS so /api/chat requests use the same model as the selector
+  // (prepareSendMessagesRequest reads document.cookie).
+  cookieStore.set('chat-model', model, {
+    path: '/',
+    httpOnly: false,
+    sameSite: 'lax',
+    secure: process.env.NODE_ENV === 'production',
+  });
 }
 
 export async function generateTitleFromUserMessage({

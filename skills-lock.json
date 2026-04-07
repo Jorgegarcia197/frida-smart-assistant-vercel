@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "skills": {
+    "json-render-generative-ui": {
+      "source": "aradotso/trending-skills",
+      "sourceType": "github",
+      "computedHash": "cd0aa442427b8ccb91b1c490188fa0a891fbc0b2b38fdcf7b0957c61064d94ab"
+    }
+  }
+}

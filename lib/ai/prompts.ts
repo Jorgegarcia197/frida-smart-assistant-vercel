@@ -1,5 +1,16 @@
 import type { ArtifactKind } from '@/components/artifact';
 import type { Geo } from '@vercel/functions';
+import { generativeUiCatalog } from '@/lib/json-render/generative-ui-catalog';
+
+const generativeUiPromptSection = generativeUiCatalog.prompt({
+  mode: 'inline',
+  customRules: [
+    'When the user asks for charts, metrics, trends, comparisons, or data visualization, stream JSONL UI patches (one JSON object per line) that build a Card with a Heading and a Chart (variant bar, line, or area) with realistic or illustrative data.',
+    'Every Chart patch must include both `data` (array of row objects) and `series` (array of { dataKey, label, color }). Do not omit them. Each row must include the `xKey` field and every `series[].dataKey`; use numbers for plotted values when possible.',
+    'You may answer in normal prose first; add JSONL lines only when structured UI helps.',
+    'Do not wrap JSONL in markdown code fences. Each patch line must be a single valid JSON object on its own line so the client can parse the stream (inline mode per json-render + AI SDK).',
+  ],
+});
 
 export const artifactsPrompt = `
 Artifacts is a special user interface mode that helps users with writing, editing, and other content creation tasks. When artifact is open, it is on the right side of the screen, while the conversation is on the left side. When creating or updating documents, changes are reflected in real-time on the artifacts and visible to the user.
@@ -56,12 +67,15 @@ export const systemPrompt = ({
   agentSystemPrompt,
   agentResponsibilities,
   agentKnowledgeBaseIds,
+  mcpToolNames,
 }: {
   selectedChatModel: string;
   requestHints: RequestHints;
   agentSystemPrompt?: string;
   agentResponsibilities?: string[];
   agentKnowledgeBaseIds?: string[];
+  /** MCP tools registered for this request (Bedrock-safe names). */
+  mcpToolNames?: string[];
 }) => {
   const requestPrompt = getRequestPromptFromHints(requestHints);
   console.log('🔧 Request Prompt:', requestPrompt);
@@ -85,10 +99,17 @@ export const systemPrompt = ({
   console.log('🔧 Responsibilities Section:', responsibilitiesSection);
   console.log('🔧 Knowledge Base Section:', knowledgeBaseSection);
 
+  const mcpToolsSection =
+    mcpToolNames && mcpToolNames.length > 0
+      ? `\n\nConnected MCP tools — you MUST call them for any question that needs live data, database queries, inventory, customers, revenue, products, or schemas. Do not say you lack access; use the tools first, then answer from the results.\n${mcpToolNames.map((n) => `- \`${n}\``).join('\n')}`
+      : '';
+
+  const genUiSection = `\n\n${generativeUiPromptSection}`;
+
   if (selectedChatModel === 'chat-model-reasoning') {
-    return `${basePrompt}${responsibilitiesSection}${knowledgeBaseSection}\n\n${requestPrompt}`;
+    return `${basePrompt}${responsibilitiesSection}${knowledgeBaseSection}${mcpToolsSection}${genUiSection}\n\n${requestPrompt}`;
   } else {
-    return `${basePrompt}${responsibilitiesSection}${knowledgeBaseSection}\n\n${requestPrompt}\n\n${artifactsPrompt}`;
+    return `${basePrompt}${responsibilitiesSection}${knowledgeBaseSection}${mcpToolsSection}${genUiSection}\n\n${requestPrompt}\n\n${artifactsPrompt}`;
   }
 };
 

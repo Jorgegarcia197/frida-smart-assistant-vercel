@@ -2,7 +2,7 @@
 
 import { exampleSetup } from 'prosemirror-example-setup';
 import { inputRules } from 'prosemirror-inputrules';
-import { EditorState } from 'prosemirror-state';
+import { EditorState, type Plugin } from 'prosemirror-state';
 import { EditorView } from 'prosemirror-view';
 import React, { memo, useEffect, useRef } from 'react';
 
@@ -58,7 +58,7 @@ function PureEditor({
             ],
           }),
           suggestionsPlugin,
-        ],
+        ] as Plugin[],
       });
 
       editorRef.current = new EditorView(containerRef.current, {

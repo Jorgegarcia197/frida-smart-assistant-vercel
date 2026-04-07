@@ -42,13 +42,13 @@ export default async function Page(props: { params: Promise<{ id: string }> }) {
   const cookieStore = await cookies();
   const chatModelFromCookie = cookieStore.get('chat-model');
 
-  // Prepare agent data from chat
+  // Prepare agent data from chat (MCP + KB persisted on chat for follow-up requests)
   const agentData = {
     agentId: chat.agentId,
     agentSystemPrompt: chat.agentSystemPrompt,
     agentResponsibilities: chat.agentResponsibilities,
-    // Note: agentMcpConfig would need to be stored in chat if we want to persist it
-    // For now, we'll rely on the current agent context for MCP config
+    agentMcpConfig: chat.agentMcpConfig,
+    agentKnowledgeBaseIds: chat.agentKnowledgeBaseIds,
   };
 
   console.log('🔧 Chat page - Loading chat with agent data:', agentData);

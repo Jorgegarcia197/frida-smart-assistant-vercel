@@ -10,7 +10,12 @@ import {
   CardTitle,
 } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { Server } from 'lucide-react';
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from '@/components/ui/collapsible';
+import { ChevronDownIcon, Server } from 'lucide-react';
 
 interface McpToolCardProps {
   serverName: string;
@@ -88,7 +93,7 @@ function PureMcpToolCard({
         hasError && 'border-destructive/50 bg-destructive/5',
       )}
     >
-      <CardHeader className="pb-3">
+      <CardHeader className="pb-4">
         <div className="flex items-center justify-between gap-2">
           <div className="flex items-center gap-2">
             <div
@@ -119,29 +124,66 @@ function PureMcpToolCard({
         )}
       </CardHeader>
 
-      {displayContent && (
+      {displayContent && isLoading && (
         <CardContent className="pt-0">
           <div
             className={cn(
-              'text-sm rounded-md p-3 max-h-48 overflow-y-auto',
+              'text-sm rounded-md p-4 max-h-48 overflow-y-auto',
               'bg-muted/50 border border-border/50',
-              isLoading && 'text-muted-foreground',
+              'text-muted-foreground',
             )}
           >
-            {isLoading ? (
-              <div className="flex items-center gap-2">
-                <div className="h-2 w-2 bg-current rounded-full animate-bounce [animation-delay:-0.3s]" />
-                <div className="h-2 w-2 bg-current rounded-full animate-bounce [animation-delay:-0.15s]" />
-                <div className="h-2 w-2 bg-current rounded-full animate-bounce" />
-                <span className="ml-2">Processing...</span>
-              </div>
-            ) : (
-              <pre className="whitespace-pre-wrap font-mono text-xs leading-relaxed">
-                {displayContent}
-              </pre>
-            )}
+            <div className="flex items-center gap-2">
+              <div className="h-2 w-2 bg-current rounded-full animate-bounce [animation-delay:-0.3s]" />
+              <div className="h-2 w-2 bg-current rounded-full animate-bounce [animation-delay:-0.15s]" />
+              <div className="h-2 w-2 bg-current rounded-full animate-bounce" />
+              <span className="ml-2">Processing...</span>
+            </div>
           </div>
         </CardContent>
+      )}
+
+      {displayContent && !isLoading && (
+        <Collapsible defaultOpen={false} className="group space-y-0">
+          <div
+            className={cn(
+              'px-6 pb-0.5',
+              'group-data-[state=closed]:px-7 group-data-[state=closed]:pb-3',
+            )}
+          >
+            <CollapsibleTrigger
+              className={cn(
+                'group/trigger flex w-full items-center justify-between gap-2 rounded-md border border-border/50',
+                'bg-muted/30 px-4 py-2.5 text-left text-xs font-medium text-muted-foreground',
+                'group-data-[state=closed]:px-5 group-data-[state=closed]:py-3.5',
+                'hover:bg-muted/50 hover:text-foreground',
+                'outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2',
+              )}
+            >
+              <span>Tool output</span>
+              <ChevronDownIcon className="size-4 shrink-0 transition-transform group-data-[state=open]/trigger:rotate-180" />
+            </CollapsibleTrigger>
+          </div>
+          <CollapsibleContent
+            className={cn(
+              'data-[state=closed]:fade-out-0 data-[state=closed]:slide-out-to-top-2 data-[state=open]:slide-in-from-top-2',
+              'outline-none data-[state=closed]:animate-out data-[state=open]:animate-in',
+            )}
+          >
+            <CardContent className="pt-3">
+              <div
+                className={cn(
+                  'text-sm rounded-md p-4 max-h-48 overflow-y-auto',
+                  'bg-muted/50 border border-border/50',
+                )}
+              >
+                <pre className="whitespace-pre-wrap font-mono text-xs leading-relaxed">
+                  {displayContent}
+                </pre>
+              </div>
+            </CardContent>
+          </CollapsibleContent>
+        </Collapsible>
       )}
     </Card>
   );

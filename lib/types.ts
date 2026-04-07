@@ -1,4 +1,5 @@
 import type { ArtifactKind } from '@/components/artifact';
+import type { SpecDataPart } from '@json-render/core';
 import type { UIMessage } from 'ai';
 import type { Suggestion } from './db/firebase-types';
 import type { ChatTools } from './ai/types';
@@ -22,6 +23,8 @@ export type CustomUIDataTypes = {
   kind: ArtifactKind;
   clear: null;
   finish: null;
+  /** json-render inline UI stream (part type `data-spec`) */
+  spec: SpecDataPart;
 };
 
 export type ChatMessage = UIMessage<

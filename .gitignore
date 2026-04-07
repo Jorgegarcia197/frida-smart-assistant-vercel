@@ -45,3 +45,7 @@ yarn-error.log*
 EF-CSB-ANUAL-2024.md
 Estado-financiero-2022.md
 Estado-Financiero-2023.md
+
+# OpenMemory - IDE/Assistant specific rules
+.cursor/rules/openmemory.mdc
+.agents/

@@ -32,9 +32,9 @@ function SidebarPortal({ isOpen, onClose, children }: Props) {
             animate={{ x: 0 }}
             exit={{ x: '100%' }}
             transition={{ type: 'spring', stiffness: 300, damping: 30 }}
-            className="fixed inset-y-0 right-0 z-[9999] h-screen md:w-[400px] md:max-w-[90vw] sm:w-full sm:max-w-full bg-background border-l"
+            className="fixed inset-y-0 right-0 z-[9999] flex h-screen min-h-0 flex-col md:w-[400px] md:max-w-[90vw] sm:w-full sm:max-w-full bg-background border-l"
           >
-            {children}
+            <div className="flex min-h-0 flex-1 flex-col">{children}</div>
           </motion.aside>
         </>
       )}

@@ -1,5 +1,5 @@
 import { textblockTypeInputRule } from 'prosemirror-inputrules';
-import { Schema } from 'prosemirror-model';
+import { Schema, type SchemaSpec } from 'prosemirror-model';
 import { schema } from 'prosemirror-schema-basic';
 import { addListNodes } from 'prosemirror-schema-list';
 import type { Transaction } from 'prosemirror-state';
@@ -8,10 +8,11 @@ import type { MutableRefObject } from 'react';
 
 import { buildContentFromDocument } from './functions';
 
+/** Same as diffview: dedupe `prosemirror-model` types when pnpm nests a second copy. */
 export const documentSchema = new Schema({
   nodes: addListNodes(schema.spec.nodes, 'paragraph block*', 'block'),
   marks: schema.spec.marks,
-});
+} as SchemaSpec);
 
 export function headingRule(level: number) {
   return textblockTypeInputRule(

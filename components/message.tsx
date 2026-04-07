@@ -29,6 +29,22 @@ import {
 import { MessageContent } from './elements/message';
 import { Response } from './elements/response';
 import { useDataStream } from './data-stream-provider';
+import { AssistantMessageContent } from '@/components/json-render/assistant-message-content';
+
+/** Bedrock-safe names use `server__tool`; if absent, show full name under MCP. */
+function splitMcpToolDisplayName(fullName: string): {
+  serverName: string;
+  shortToolName: string;
+} {
+  if (fullName.includes('__')) {
+    const idx = fullName.indexOf('__');
+    return {
+      serverName: fullName.slice(0, idx),
+      shortToolName: fullName.slice(idx + 2),
+    };
+  }
+  return { serverName: 'MCP', shortToolName: fullName };
+}
 
 const PurePreviewMessage = ({
   chatId,
@@ -58,6 +74,18 @@ const PurePreviewMessage = ({
   );
 
   useDataStream();
+
+  const firstTextIndex = message.parts.findIndex((p) => p.type === 'text');
+  const firstDataSpecIndex = message.parts.findIndex((p) => p.type === 'data-spec');
+  const assistantUiIndex =
+    message.role === 'assistant'
+      ? (() => {
+          const candidates = [firstTextIndex, firstDataSpecIndex].filter(
+            (i) => i >= 0,
+          );
+          return candidates.length > 0 ? Math.min(...candidates) : -1;
+        })()
+      : -1;
 
   return (
     <AnimatePresence>
@@ -119,6 +147,29 @@ const PurePreviewMessage = ({
                     reasoning={part.text}
                   />
                 );
+              }
+
+              if (
+                message.role === 'assistant' &&
+                (type === 'text' || type === 'data-spec')
+              ) {
+                if (assistantUiIndex < 0 || index !== assistantUiIndex) {
+                  return null;
+                }
+                if (mode === 'view') {
+                  return (
+                    <div
+                      key={`assistant-ui-${message.id}`}
+                      className="flex flex-row gap-2 items-start w-full"
+                    >
+                      <AssistantMessageContent
+                        message={message}
+                        isLoading={isLoading}
+                      />
+                    </div>
+                  );
+                }
+                return null;
               }
 
               if (type === 'text') {
@@ -302,34 +353,50 @@ const PurePreviewMessage = ({
                 );
               }
 
-              // MCP Tool
+              // MCP / dynamic tools (incl. @ai-sdk/mcp): part.toolName, not literal `type`
               if (type === 'dynamic-tool') {
                 const { state, toolCallId } = part;
-                const [serverName, toolName] = type.split('__', 2);
+                const fullToolName =
+                  'toolName' in part && typeof part.toolName === 'string'
+                    ? part.toolName
+                    : 'unknown';
+                const { serverName, shortToolName } =
+                  splitMcpToolDisplayName(fullToolName);
 
-                const args = {};
-
-                if (state === 'input-available') {
+                if (state === 'input-streaming' || state === 'input-available') {
                   return (
                     <McpToolCard
                       key={toolCallId}
                       serverName={serverName}
-                      toolName={toolName}
+                      toolName={shortToolName}
                       state="call"
-                      args={args}
+                      args={'input' in part ? part.input : undefined}
                       isReadonly={isReadonly}
                     />
                   );
-                } else if (state === 'output-available') {
+                }
+
+                if (state === 'output-available') {
                   return (
                     <McpToolCard
                       key={toolCallId}
                       serverName={serverName}
-                      toolName={toolName}
+                      toolName={shortToolName}
                       state="result"
-                      result={
-                        'The tool was executed successfully! Check the result below.'
-                      }
+                      result={part.output}
+                      isReadonly={isReadonly}
+                    />
+                  );
+                }
+
+                if (state === 'output-error') {
+                  return (
+                    <McpToolCard
+                      key={toolCallId}
+                      serverName={serverName}
+                      toolName={shortToolName}
+                      state="result"
+                      result={{ error: part.errorText }}
                       isReadonly={isReadonly}
                     />
                   );

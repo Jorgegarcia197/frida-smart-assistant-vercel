@@ -6,6 +6,29 @@ const config: Config = {
     './pages/**/*.{js,ts,jsx,tsx,mdx}',
     './components/**/*.{js,ts,jsx,tsx,mdx}',
     './app/**/*.{js,ts,jsx,tsx,mdx}',
+    // Do NOT scan @json-render/shadcn in node_modules: it ships Tailwind v4-only
+    // classes (e.g. gap-[--spacing(var(--gap))]) that break Tailwind 3 CSS output.
+  ],
+  /** Classes only referenced from @json-render/shadcn at runtime (not in our source scan). */
+  safelist: [
+    'max-w-xs',
+    'sm:min-w-[280px]',
+    'max-w-sm',
+    'sm:min-w-[320px]',
+    'max-w-md',
+    'sm:min-w-[360px]',
+    'mx-auto',
+    'gap-0',
+    'gap-6',
+    'justify-around',
+    'text-lg',
+    'text-base',
+    'text-xl',
+    'font-mono',
+    'bg-muted',
+    'px-1.5',
+    'py-0.5',
+    'text-left',
   ],
   theme: {
     extend: {

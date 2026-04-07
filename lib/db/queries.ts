@@ -221,6 +221,8 @@ export async function saveChat({
   agentId,
   agentSystemPrompt,
   agentResponsibilities,
+  agentMcpConfig,
+  agentKnowledgeBaseIds,
 }: {
   id: string;
   userId: string;
@@ -229,6 +231,8 @@ export async function saveChat({
   agentId?: string;
   agentSystemPrompt?: string;
   agentResponsibilities?: string[];
+  agentMcpConfig?: unknown;
+  agentKnowledgeBaseIds?: string[];
 }) {
   try {
     const chatData: any = {
@@ -248,10 +252,54 @@ export async function saveChat({
     if (agentResponsibilities && agentResponsibilities.length > 0) {
       chatData.agentResponsibilities = agentResponsibilities;
     }
+    if (agentMcpConfig !== undefined && agentMcpConfig !== null) {
+      chatData.agentMcpConfig = agentMcpConfig;
+    }
+    if (agentKnowledgeBaseIds && agentKnowledgeBaseIds.length > 0) {
+      chatData.agentKnowledgeBaseIds = agentKnowledgeBaseIds;
+    }
 
     await db.collection('chats').doc(id).set(chatData);
   } catch (error) {
     throw new ChatSDKError('bad_request:database', 'Failed to save chat');
+  }
+}
+
+/** Merge agent fields onto an existing chat (e.g. first time MCP is attached). */
+export async function mergeChatAgentFields({
+  id,
+  agentSystemPrompt,
+  agentResponsibilities,
+  agentMcpConfig,
+  agentKnowledgeBaseIds,
+}: {
+  id: string;
+  agentSystemPrompt?: string;
+  agentResponsibilities?: string[];
+  agentMcpConfig?: unknown;
+  agentKnowledgeBaseIds?: string[];
+}) {
+  try {
+    const patch: Record<string, unknown> = {};
+    if (agentSystemPrompt !== undefined) {
+      patch.agentSystemPrompt = agentSystemPrompt;
+    }
+    if (agentResponsibilities !== undefined) {
+      patch.agentResponsibilities = agentResponsibilities;
+    }
+    if (agentMcpConfig !== undefined) {
+      patch.agentMcpConfig = agentMcpConfig;
+    }
+    if (agentKnowledgeBaseIds !== undefined) {
+      patch.agentKnowledgeBaseIds = agentKnowledgeBaseIds;
+    }
+    if (Object.keys(patch).length === 0) return;
+    await db.collection('chats').doc(id).set(patch, { merge: true });
+  } catch (error) {
+    throw new ChatSDKError(
+      'bad_request:database',
+      'Failed to merge chat agent fields',
+    );
   }
 }
 

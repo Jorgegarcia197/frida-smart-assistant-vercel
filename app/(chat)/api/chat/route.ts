@@ -1,5 +1,4 @@
 import {
-  smoothStream,
   streamText,
   stepCountIs,
   createUIMessageStream,
@@ -7,6 +6,7 @@ import {
   JsonToSseTransformStream,
   dynamicTool,
 } from 'ai';
+import { pipeJsonRender } from '@json-render/core';
 import { auth } from '@/app/(auth)/auth';
 import { type RequestHints, systemPrompt } from '@/lib/ai/prompts';
 import {
@@ -15,6 +15,7 @@ import {
   getChatById,
   getMessagesByChatId,
   getStreamIdsByChatId,
+  mergeChatAgentFields,
   saveChat,
   saveMessages,
 } from '@/lib/db/queries';
@@ -27,6 +28,15 @@ import { getWeather } from '@/lib/ai/tools/get-weather';
 import { createMermaidDiagram } from '@/lib/ai/tools/create-mermaid-diagram';
 import { myProvider } from '@/lib/ai/providers';
 import { getMcpClientInstance } from '@/lib/mcp/mcp-singleton-instance';
+import { normalizeAgentMcps } from '@/lib/agents/normalize-agent-mcps';
+import {
+  applyServerMcpSecretsFromEnv,
+  redactMcpConfigForLog,
+} from '@/lib/mcp/merge-server-mcp-env';
+import {
+  collectAiSdkSseMcpTools,
+  filterToNonSseMcpServers,
+} from '@/lib/mcp/ai-sdk-mcp-tools';
 import { z } from 'zod/v3';
 import { postRequestBodySchema, type PostRequestBody } from './schema';
 import { geolocation } from '@vercel/functions';
@@ -123,35 +133,91 @@ function jsonSchemaPropertyToZod(property: any): z.ZodTypeAny {
   }
 }
 
+/** AWS Bedrock Converse tool names: [a-zA-Z0-9_-]+, max 64, should start with a letter. */
+function sanitizeBedrockToolName(raw: string, used: Set<string>): string {
+  let s = raw.replace(/[^a-zA-Z0-9_-]/g, '_').replace(/_+/g, '_');
+  if (!/^[a-zA-Z]/.test(s)) {
+    s = `t_${s}`;
+  }
+  s = s.slice(0, 64);
+  let candidate = s || 'tool';
+  let n = 0;
+  while (used.has(candidate)) {
+    n += 1;
+    const suffix = `_${n}`;
+    candidate = `${s.slice(0, Math.max(1, 64 - suffix.length))}${suffix}`;
+  }
+  used.add(candidate);
+  return candidate;
+}
+
 // Helper function to get MCP tools for the AI SDK
 async function getMcpToolsForAI(
   userId: string,
   agentMcpConfig?: any,
   agentKnowledgeBaseIds?: string[],
-) {
+): Promise<{
+  mcpTools: Record<string, any>;
+  mcpActiveTools: string[];
+  closeAiSdkMcpClients: () => Promise<void>;
+}> {
   const mcpTools: Record<string, any> = {};
   const mcpActiveTools: string[] = [];
+  const bedrockToolNames = new Set<string>();
+  let closeAiSdkMcpClients: () => Promise<void> = async () => {};
 
   try {
+    const resolvedAgentMcp = applyServerMcpSecretsFromEnv(
+      normalizeAgentMcps(agentMcpConfig),
+    ) as typeof agentMcpConfig;
+
     console.log('🔧 Getting MCP client instance for user:', userId);
-    console.log('🔧 Agent MCP config:', agentMcpConfig);
+    console.log(
+      '🔧 Agent MCP config (resolved, redacted):',
+      redactMcpConfigForLog(resolvedAgentMcp),
+    );
     console.log('🔧 Agent knowledge base IDs:', agentKnowledgeBaseIds);
+
+    const mcpServersResolved = resolvedAgentMcp?.mcpServers as
+      | Record<string, unknown>
+      | undefined;
+
+    // SSE servers: @ai-sdk/mcp createMCPClient (https://ai-sdk.dev/docs/ai-sdk-core/mcp-tools)
+    const aiSdkResult = await collectAiSdkSseMcpTools(
+      mcpServersResolved,
+      sanitizeBedrockToolName,
+      bedrockToolNames,
+    );
+    Object.assign(mcpTools, aiSdkResult.mcpTools);
+    mcpActiveTools.push(...aiSdkResult.mcpActiveTools);
+    closeAiSdkMcpClients = aiSdkResult.closeClients;
 
     const mcpClient = getMcpClientInstance(userId);
 
-    if (!mcpClient || mcpClient.isConnecting) {
-      console.log('⏳ MCP client not ready or still connecting');
-      return { mcpTools, mcpActiveTools };
-    }
+    const hasAgentMcpServers =
+      resolvedAgentMcp?.mcpServers &&
+      typeof resolvedAgentMcp.mcpServers === 'object' &&
+      Object.keys(resolvedAgentMcp.mcpServers).length > 0;
 
-    // Ensure MCP servers are initialized
-    if (mcpClient.connections.length === 0) {
-      console.log('🔧 No connections found, initializing MCP servers...');
+    const legacyAgentMcpOnly = hasAgentMcpServers
+      ? { mcpServers: filterToNonSseMcpServers(mcpServersResolved) }
+      : undefined;
+
+    // Initialize or merge when there are no connections yet, or when the loaded agent
+    // defines MCP servers (must merge even if the user already had hub connections).
+    // Agent SSE entries are handled above via @ai-sdk/mcp; only stdio/non-SSE merge here.
+    if (mcpClient.connections.length === 0 || hasAgentMcpServers) {
+      console.log(
+        '🔧 Initializing legacy MCP client (stdio / hub, non-SSE agent entries):',
+        hasAgentMcpServers
+          ? 'merging non-SSE agent mcpServers with user config'
+          : 'from user config only',
+      );
       try {
-        // If agent has MCP config, merge it with user's MCP config
-        if (agentMcpConfig?.mcpServers) {
-          console.log('🔧 Merging agent MCP servers with user MCP servers');
-          await mcpClient.initializeMcpServersWithAgentConfig(agentMcpConfig);
+        if (hasAgentMcpServers) {
+          await mcpClient.initializeMcpServersWithAgentConfig(
+            legacyAgentMcpOnly ?? { mcpServers: {} },
+          );
         } else {
           await mcpClient.initializeMcpServers();
         }
@@ -189,12 +255,30 @@ async function getMcpToolsForAI(
       enabledServers.map((s) => s.name),
     );
 
+    const hasAnyAiSdkTools = aiSdkResult.mcpActiveTools.length > 0;
+    if (
+      hasAgentMcpServers &&
+      !hasAnyAiSdkTools &&
+      enabledServers.length === 0 &&
+      resolvedAgentMcp?.mcpServers
+    ) {
+      console.warn(
+        '⚠️ Agent MCP config present but no connected MCP servers with tools. Check server logs for SSE/connection errors. Raw server statuses:',
+        servers.map((s) => ({
+          name: s.name,
+          status: s.status,
+          disabled: s.disabled,
+          toolCount: s.tools?.length ?? 0,
+        })),
+      );
+    }
+
     for (const server of enabledServers) {
       if (!server.tools) continue;
 
       for (const mcpTool of server.tools) {
-        // Create a unique tool name with server prefix
-        const toolName = `${server.name}__${mcpTool.name}`;
+        const internalName = `${server.name}__${mcpTool.name}`;
+        const toolName = sanitizeBedrockToolName(internalName, bedrockToolNames);
 
         // Convert JSON Schema to Zod schema for parameters
         let parametersSchema: z.ZodTypeAny = z.object({});
@@ -204,7 +288,7 @@ async function getMcpToolsForAI(
             parametersSchema = jsonSchemaToZodObject(mcpTool.inputSchema);
           } catch (error) {
             console.warn(
-              `Failed to convert JSON schema to Zod for tool ${toolName}:`,
+              `Failed to convert JSON schema to Zod for tool ${internalName}:`,
               error,
             );
             parametersSchema = z.object({});
@@ -217,18 +301,21 @@ async function getMcpToolsForAI(
             `MCP tool: ${mcpTool.name} from ${server.name}`,
           inputSchema: parametersSchema,
           execute: async (args: any) => {
-            console.log(`🛠️ Executing MCP tool: ${toolName} with args:`, args);
+            console.log(
+              `🛠️ Executing MCP tool: ${internalName} (Bedrock name: ${toolName}) with args:`,
+              args,
+            );
             try {
               const result = await mcpClient.callTool(
                 server.name,
                 mcpTool.name,
                 args,
               );
-              console.log(`✅ MCP tool result for ${toolName}:`, result);
+              console.log(`✅ MCP tool result for ${internalName}:`, result);
               return result;
             } catch (error) {
               console.error(
-                `❌ MCP tool execution failed for ${toolName}:`,
+                `❌ MCP tool execution failed for ${internalName}:`,
                 error,
               );
               throw error;
@@ -256,10 +343,14 @@ async function getMcpToolsForAI(
     }
 
     console.log('🔧 All tools ready:', mcpActiveTools);
-    return { mcpTools, mcpActiveTools };
+    return { mcpTools, mcpActiveTools, closeAiSdkMcpClients };
   } catch (error) {
     console.error('❌ Failed to initialize tools:', error);
-    return { mcpTools, mcpActiveTools };
+    return {
+      mcpTools,
+      mcpActiveTools,
+      closeAiSdkMcpClients: async () => {},
+    };
   }
 }
 
@@ -269,7 +360,19 @@ export async function POST(request: Request) {
 
   try {
     const json = await request.json();
-    console.log('🔧 Raw JSON received:', JSON.stringify(json, null, 2));
+    const logSafe =
+      json &&
+      typeof json === 'object' &&
+      'agentMcpConfig' in json &&
+      (json as { agentMcpConfig?: unknown }).agentMcpConfig !== undefined
+        ? {
+            ...json,
+            agentMcpConfig: redactMcpConfigForLog(
+              (json as { agentMcpConfig: unknown }).agentMcpConfig,
+            ),
+          }
+        : json;
+    console.log('🔧 Raw JSON received:', JSON.stringify(logSafe, null, 2));
     requestBody = postRequestBodySchema.parse(json);
   } catch (error) {
     console.error('❌ Request parsing/validation failed:', error);
@@ -296,11 +399,17 @@ export async function POST(request: Request) {
       agentMcpConfig,
       agentKnowledgeBaseIds,
     } = requestBody;
-    console.log('🔧 Request Body received:', requestBody);
+    console.log('🔧 Request Body received (redacted MCP):', {
+      ...requestBody,
+      agentMcpConfig: redactMcpConfigForLog(agentMcpConfig),
+    });
 
     console.log('🔧 Agent System Prompt received:', agentSystemPrompt);
     console.log('🔧 Agent Responsibilities received:', agentResponsibilities);
-    console.log('🔧 Agent MCP Config received:', agentMcpConfig);
+    console.log(
+      '🔧 Agent MCP Config received (redacted):',
+      redactMcpConfigForLog(agentMcpConfig),
+    );
     console.log('🔧 Agent Knowledge Base IDs received:', agentKnowledgeBaseIds);
 
     const session = await auth();
@@ -322,13 +431,15 @@ export async function POST(request: Request) {
         userId: session.user.id,
         title,
         visibility: selectedVisibilityType,
-        // Save agent data if provided
         agentSystemPrompt,
         agentResponsibilities,
+        agentMcpConfig,
+        agentKnowledgeBaseIds,
       });
       console.log('✅ New chat saved with agent data:', {
         agentSystemPrompt,
         agentResponsibilities,
+        hasAgentMcp: !!agentMcpConfig,
       });
     } else {
       console.log('📂 Using existing chat');
@@ -336,7 +447,35 @@ export async function POST(request: Request) {
         console.error('❌ Chat access forbidden');
         return new ChatSDKError('forbidden:chat').toResponse();
       }
+      // Persist agent/MCP when the client sends it (reload still works via merge below)
+      if (
+        agentMcpConfig !== undefined ||
+        agentKnowledgeBaseIds !== undefined ||
+        agentSystemPrompt !== undefined ||
+        agentResponsibilities !== undefined
+      ) {
+        await mergeChatAgentFields({
+          id,
+          ...(agentMcpConfig !== undefined ? { agentMcpConfig } : {}),
+          ...(agentKnowledgeBaseIds !== undefined
+            ? { agentKnowledgeBaseIds }
+            : {}),
+          ...(agentSystemPrompt !== undefined ? { agentSystemPrompt } : {}),
+          ...(agentResponsibilities !== undefined
+            ? { agentResponsibilities }
+            : {}),
+        });
+      }
     }
+
+    const effectiveAgentMcpConfig =
+      agentMcpConfig ?? chat?.agentMcpConfig;
+    const effectiveAgentKnowledgeBaseIds =
+      agentKnowledgeBaseIds ?? chat?.agentKnowledgeBaseIds;
+    const effectiveAgentSystemPrompt =
+      agentSystemPrompt ?? chat?.agentSystemPrompt;
+    const effectiveAgentResponsibilities =
+      agentResponsibilities ?? chat?.agentResponsibilities;
 
     const messagesFromDb = await getMessagesByChatId({ id });
     const uiMessages = [...convertToUIMessages(messagesFromDb), message];
@@ -367,33 +506,44 @@ export async function POST(request: Request) {
     await createStreamId({ streamId, chatId: id });
 
     // Get MCP tools for this user (with agent MCP config and knowledge base IDs if provided)
-    const { mcpTools, mcpActiveTools } = await getMcpToolsForAI(
-      session.user.id,
-      agentMcpConfig,
-      agentKnowledgeBaseIds,
-    );
+    const { mcpTools, mcpActiveTools, closeAiSdkMcpClients } =
+      await getMcpToolsForAI(
+        session.user.id,
+        effectiveAgentMcpConfig,
+        effectiveAgentKnowledgeBaseIds,
+      );
 
     const stream = createUIMessageStream({
       execute: ({ writer: dataStream }) => {
         const systemPromptText = systemPrompt({
           selectedChatModel,
           requestHints,
-          agentSystemPrompt,
-          agentResponsibilities,
-          agentKnowledgeBaseIds,
+          agentSystemPrompt: effectiveAgentSystemPrompt,
+          agentResponsibilities: effectiveAgentResponsibilities,
+          agentKnowledgeBaseIds: effectiveAgentKnowledgeBaseIds,
+          mcpToolNames: mcpActiveTools,
         });
 
         console.log('🔧 System Prompt:', systemPromptText);
+
+        const hasMcpToolsForRequest = mcpActiveTools.length > 0;
 
         const result = streamText({
           model: myProvider.languageModel(selectedChatModel),
           system: systemPromptText,
           messages: convertToModelMessages(uiMessages),
-          stopWhen: stepCountIs(5),
+          // Tool call + optional follow-up text needs more than one step
+          stopWhen: stepCountIs(hasMcpToolsForRequest ? 12 : 5),
+          toolChoice: hasMcpToolsForRequest ? 'auto' : undefined,
+          onFinish: async () => {
+            await closeAiSdkMcpClients();
+          },
 
-          experimental_activeTools:
+          // Reasoning model disables built-in chat/artifact tools, but agent MCP tools
+          // must stay active so loaded agents can use DB/external MCP servers.
+          activeTools:
             selectedChatModel === 'chat-model-reasoning'
-              ? []
+              ? ([...mcpActiveTools] as any)
               : ([
                   'getWeather',
                   'createDocument',
@@ -402,7 +552,6 @@ export async function POST(request: Request) {
                   'createMermaidDiagram',
                   ...mcpActiveTools,
                 ] as any),
-          experimental_transform: smoothStream({ chunking: 'word' }),
           tools: {
             getWeather,
             createDocument: createDocument({ session, dataStream }),
@@ -419,9 +568,11 @@ export async function POST(request: Request) {
         result.consumeStream();
 
         dataStream.merge(
-          result.toUIMessageStream({
-            sendReasoning: true,
-          }),
+          pipeJsonRender(
+            result.toUIMessageStream({
+              sendReasoning: true,
+            }),
+          ),
         );
       },
       generateId: generateUUID,

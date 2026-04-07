@@ -30,6 +30,7 @@ import {
   type CallToolResult,
 } from '@modelcontextprotocol/sdk/types.js';
 import { secondsToMs } from './utils';
+import { redactMcpConfigForLog } from './merge-server-mcp-env';
 
 // Default timeout for internal MCP data requests in milliseconds; is not the same as the user facing timeout stored as DEFAULT_MCP_TIMEOUT_SECONDS
 const DEFAULT_REQUEST_TIMEOUT_MS = 5000;
@@ -47,6 +48,8 @@ const BaseConfigSchema = z.object({
 
 const SseConfigSchema = BaseConfigSchema.extend({
   url: z.string().url(),
+  /** Optional headers for SSE + follow-up POSTs (e.g. x-api-key, x-db-url from agent builder). */
+  env: z.record(z.string()).optional(),
 }).transform((config) => ({
   ...config,
   transportType: 'sse' as const,
@@ -132,8 +135,8 @@ export class MCPClient {
       );
 
       console.log(
-        '[MCPClient] Agent MCP servers config:',
-        JSON.stringify(agentMcpConfig, null, 2),
+        '[MCPClient] Agent MCP servers config (redacted):',
+        JSON.stringify(redactMcpConfigForLog(agentMcpConfig), null, 2),
       );
 
       // Merge agent MCP servers with user MCP servers
@@ -148,8 +151,8 @@ export class MCPClient {
       };
 
       console.log(
-        '[MCPClient] Merged MCP servers config:',
-        JSON.stringify(mergedConfig, null, 2),
+        '[MCPClient] Merged MCP servers config (redacted):',
+        JSON.stringify(redactMcpConfigForLog(mergedConfig), null, 2),
       );
 
       if (Object.keys(mergedMcpServers).length > 0) {
@@ -196,99 +199,102 @@ export class MCPClient {
     newServers: Record<string, McpServerConfig>,
   ): Promise<void> {
     this.isConnecting = true;
-    const currentNames = new Set(
-      this.connections.map((conn) => conn.server.name),
-    );
-    const newNames = new Set(Object.keys(newServers));
-
-    // Delete removed servers
-    for (const name of currentNames) {
-      if (!newNames.has(name)) {
-        await this.deleteConnection(name);
-      }
-    }
-
-    // Update or add servers
-    for (const [name, config] of Object.entries(newServers)) {
-      const currentConnection = this.connections.find(
-        (conn) => conn.server.name === name,
+    try {
+      const currentNames = new Set(
+        this.connections.map((conn) => conn.server.name),
       );
+      const newNames = new Set(Object.keys(newServers));
 
-      // Handle disabled servers
-      if (config.disabled === true) {
-        if (currentConnection) {
-          // If server was enabled and now disabled, disconnect but keep the entry
-          if (!currentConnection.server.disabled) {
-            try {
-              await currentConnection.transport.close();
-              await currentConnection.client.close();
-            } catch (error) {
-              console.error(
-                `Failed to close connection for disabled server ${name}:`,
-                error,
-              );
-            }
-            currentConnection.server.status = 'disconnected';
-            currentConnection.server.disabled = true;
-            console.log(`Disconnected disabled MCP server: ${name}`);
-          }
-        } else {
-          // New disabled server - create entry without connecting
-          this.connections.push({
-            server: {
-              name,
-              config: JSON.stringify(config),
-              status: 'disconnected',
-              disabled: true,
-            },
-            client: null as any, // We won't use these for disabled servers
-            transport: null as any,
-          });
-        }
-        continue;
-      }
-
-      // Handle enabled servers
-      if (!currentConnection) {
-        // New enabled server
-        try {
-          // if (config.transportType === "stdio") {
-          //   this.setupFileWatcher(name, config);
-          // }
-          await this.newConnectToServer(name, config);
-        } catch (error) {
-          console.error(`Failed to connect to new MCP server ${name}:`, error);
-          throw error;
-        }
-      } else if (
-        !deepEqual(JSON.parse(currentConnection.server.config), config)
-      ) {
-        // Existing server with changed config
-        try {
-          // if (config.transportType === "stdio") {
-          //   this.setupFileWatcher(name, config);
-          // }
+      // Delete removed servers
+      for (const name of currentNames) {
+        if (!newNames.has(name)) {
           await this.deleteConnection(name);
-          await this.newConnectToServer(name, config);
-          console.log(`Reconnected MCP server with updated config: ${name}`);
-        } catch (error) {
-          console.error(`Failed to reconnect MCP server ${name}:`, error);
-        }
-      } else if (currentConnection.server.disabled) {
-        // Server was disabled and now enabled - connect it
-        try {
-          await this.newConnectToServer(name, config);
-          console.log(`Re-enabled and connected MCP server: ${name}`);
-        } catch (error) {
-          console.error(
-            `Failed to connect re-enabled MCP server ${name}:`,
-            error,
-          );
         }
       }
-      // If server exists with same config and is already enabled, do nothing
+
+      // Update or add servers
+      for (const [name, config] of Object.entries(newServers)) {
+        const currentConnection = this.connections.find(
+          (conn) => conn.server.name === name,
+        );
+
+        // Handle disabled servers
+        if (config.disabled === true) {
+          if (currentConnection) {
+            // If server was enabled and now disabled, disconnect but keep the entry
+            if (!currentConnection.server.disabled) {
+              try {
+                await currentConnection.transport.close();
+                await currentConnection.client.close();
+              } catch (error) {
+                console.error(
+                  `Failed to close connection for disabled server ${name}:`,
+                  error,
+                );
+              }
+              currentConnection.server.status = 'disconnected';
+              currentConnection.server.disabled = true;
+              console.log(`Disconnected disabled MCP server: ${name}`);
+            }
+          } else {
+            // New disabled server - create entry without connecting
+            this.connections.push({
+              server: {
+                name,
+                config: JSON.stringify(config),
+                status: 'disconnected',
+                disabled: true,
+              },
+              client: null as any, // We won't use these for disabled servers
+              transport: null as any,
+            });
+          }
+          continue;
+        }
+
+        // Handle enabled servers
+        if (!currentConnection) {
+          // New enabled server
+          try {
+            // if (config.transportType === "stdio") {
+            //   this.setupFileWatcher(name, config);
+            // }
+            await this.newConnectToServer(name, config);
+          } catch (error) {
+            console.error(`Failed to connect to new MCP server ${name}:`, error);
+            throw error;
+          }
+        } else if (
+          !deepEqual(JSON.parse(currentConnection.server.config), config)
+        ) {
+          // Existing server with changed config
+          try {
+            // if (config.transportType === "stdio") {
+            //   this.setupFileWatcher(name, config);
+            // }
+            await this.deleteConnection(name);
+            await this.newConnectToServer(name, config);
+            console.log(`Reconnected MCP server with updated config: ${name}`);
+          } catch (error) {
+            console.error(`Failed to reconnect MCP server ${name}:`, error);
+          }
+        } else if (currentConnection.server.disabled) {
+          // Server was disabled and now enabled - connect it
+          try {
+            await this.newConnectToServer(name, config);
+            console.log(`Re-enabled and connected MCP server: ${name}`);
+          } catch (error) {
+            console.error(
+              `Failed to connect re-enabled MCP server ${name}:`,
+              error,
+            );
+          }
+        }
+        // If server exists with same config and is already enabled, do nothing
+      }
+    } finally {
+      this.isConnecting = false;
     }
-    this.isConnecting = false;
   }
 
   /**
@@ -321,7 +327,16 @@ export class MCPClient {
 
       if (config.transportType === 'sse') {
         console.log('Creating SSE transport for:', name);
-        transport = new SSEClientTransport(new URL(config.url), {});
+        const sseOpts: ConstructorParameters<typeof SSEClientTransport>[1] =
+          {};
+        if (config.env && Object.keys(config.env).length > 0) {
+          const headers = new Headers();
+          for (const [key, value] of Object.entries(config.env)) {
+            headers.set(key, value);
+          }
+          sseOpts.requestInit = { headers };
+        }
+        transport = new SSEClientTransport(new URL(config.url), sseOpts);
       } else {
         console.log('Creating stdio transport for:', name);
         transport = new StdioClientTransport({
@@ -415,17 +430,35 @@ export class MCPClient {
       connection.server.resourceTemplates =
         await this.fetchResourceTemplatesList(name);
     } catch (error) {
-      // Update status with error
+      const message = error instanceof Error ? error.message : String(error);
       const connection = this.connections.find(
         (conn) => conn.server.name === name,
       );
       if (connection) {
         connection.server.status = 'disconnected';
-        // this.appendErrorMessage(
-        //   connection,
-        //   error instanceof Error ? error.message : String(error)
-        // );
+        connection.server.error = message;
       }
+
+      if (config.transportType === 'sse') {
+        const is403 =
+          message.includes('403') ||
+          message.includes('Non-200 status code (403)');
+        if (is403) {
+          console.error(
+            `[MCPClient] SSE "${name}" → HTTP 403 from ${config.url}. ` +
+              'The MCP server refused the stream. This is not a Next.js bug. ' +
+              'Check: (1) x-api-key / auth headers match what that service expects, ' +
+              '(2) IP allowlist — server-side calls use your machine IP (dev) or Vercel IPs (prod), ' +
+              '(3) Azure Container Apps ingress / Entra / API Management rules.',
+          );
+        } else {
+          console.error(
+            `[MCPClient] Failed to connect SSE "${name}" at ${config.url}:`,
+            message,
+          );
+        }
+      }
+
       throw error;
     }
   }

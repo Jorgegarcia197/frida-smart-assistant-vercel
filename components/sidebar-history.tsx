@@ -76,6 +76,16 @@ const groupChatsByDate = (chats: Chat[]): GroupedChats => {
   );
 };
 
+/** Keeps first occurrence per id — infinite pages or SWR cache can list the same chat twice. */
+function dedupeChatsById(chats: Chat[]): Chat[] {
+  const seen = new Set<string>();
+  return chats.filter((chat) => {
+    if (seen.has(chat.id)) return false;
+    seen.add(chat.id);
+    return true;
+  });
+}
+
 export function getChatHistoryPaginationKey(
   pageIndex: number,
   previousPageData: ChatHistory,
@@ -208,8 +218,10 @@ export function SidebarHistory({ user }: { user: User | undefined }) {
           <SidebarMenu>
             {paginatedChatHistories &&
               (() => {
-                const chatsFromHistory = paginatedChatHistories.flatMap(
-                  (paginatedChatHistory) => paginatedChatHistory.chats,
+                const chatsFromHistory = dedupeChatsById(
+                  paginatedChatHistories.flatMap(
+                    (paginatedChatHistory) => paginatedChatHistory.chats,
+                  ),
                 );
 
                 const groupedChats = groupChatsByDate(chatsFromHistory);

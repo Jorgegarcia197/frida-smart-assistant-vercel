@@ -19,6 +19,9 @@ export interface Chat {
   agentId?: string;
   agentSystemPrompt?: string;
   agentResponsibilities?: string[];
+  /** Persisted so follow-up messages still have MCP tools after reload */
+  agentMcpConfig?: unknown;
+  agentKnowledgeBaseIds?: string[];
 }
 
 /** Legacy shape for persisted attachments (AI SDK v4-era). */

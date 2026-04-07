@@ -3,6 +3,7 @@ import {
   Schema,
   type Node as ProsemirrorNode,
   type MarkSpec,
+  type SchemaSpec,
   DOMParser,
 } from 'prosemirror-model';
 import { schema } from 'prosemirror-schema-basic';
@@ -15,7 +16,8 @@ import ReactMarkdown from 'react-markdown';
 
 import { diffEditor, DiffType } from '@/lib/editor/diff';
 
-const diffSchema = new Schema({
+/** Cast: multiple physical `prosemirror-model` installs (pnpm) make `OrderedMap<NodeSpec>` types incompatible though runtime is identical. */
+const diffSchemaSpec = {
   nodes: addListNodes(schema.spec.nodes, 'paragraph block*', 'block'),
   marks: OrderedMap.from({
     ...schema.spec.marks.toObject(),
@@ -40,7 +42,9 @@ const diffSchema = new Schema({
       },
     } as MarkSpec,
   }),
-});
+} as SchemaSpec;
+
+const diffSchema = new Schema(diffSchemaSpec);
 
 function computeDiff(oldDoc: ProsemirrorNode, newDoc: ProsemirrorNode) {
   return diffEditor(diffSchema, oldDoc.toJSON(), newDoc.toJSON());

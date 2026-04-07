@@ -63,3 +63,33 @@ export function useAgents(email?: string) {
     mutate, // For manual revalidation if needed
   };
 }
+
+/** Agents from Frida Agent Builder `by-deployment` API (proxied; requires session). */
+export function useAgentsByDeployment(
+  deployment = 'frida-assistant',
+  enabled = true,
+) {
+  const { data, error, isLoading, mutate } = useSWR<AgentsResponse>(
+    enabled
+      ? `/api/agents/configs/by-deployment?deployment=${encodeURIComponent(deployment)}`
+      : null,
+    fetcher,
+    {
+      revalidateOnFocus: false,
+      revalidateOnReconnect: true,
+      dedupingInterval: 60000,
+      errorRetryCount: 3,
+      errorRetryInterval: 5000,
+      refreshInterval: 0,
+      keepPreviousData: true,
+      fallbackData: { success: true, agents: [] },
+    },
+  );
+
+  return {
+    agents: data?.agents || [],
+    isLoading,
+    error,
+    mutate,
+  };
+}
