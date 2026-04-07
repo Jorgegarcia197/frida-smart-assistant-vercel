@@ -1,5 +1,5 @@
 import Link from 'next/link';
-import React, { memo } from 'react';
+import React, { type ComponentPropsWithoutRef, memo } from 'react';
 import ReactMarkdown, { type Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { CodeBlock } from './code-block';
@@ -20,32 +20,40 @@ const components: Partial<Components> = {
     }
     
     // Otherwise, render as normal paragraph
-    return <p {...props}>{children}</p>;
+    return (
+      <p {...(props as ComponentPropsWithoutRef<'p'>)}>{children}</p>
+    );
   },
   ol: ({ node, children, ...props }) => {
     return (
-      <ol className="list-decimal list-outside ml-4" {...props}>
+      <ol
+        className="list-decimal list-outside ml-4"
+        {...(props as ComponentPropsWithoutRef<'ol'>)}
+      >
         {children}
       </ol>
     );
   },
   li: ({ node, children, ...props }) => {
     return (
-      <li className="py-1" {...props}>
+      <li className="py-1" {...(props as ComponentPropsWithoutRef<'li'>)}>
         {children}
       </li>
     );
   },
   ul: ({ node, children, ...props }) => {
     return (
-      <ul className="list-decimal list-outside ml-4" {...props}>
+      <ul
+        className="list-decimal list-outside ml-4"
+        {...(props as ComponentPropsWithoutRef<'ul'>)}
+      >
         {children}
       </ul>
     );
   },
   strong: ({ node, children, ...props }) => {
     return (
-      <span className="font-semibold" {...props}>
+      <span className="font-semibold" {...(props as ComponentPropsWithoutRef<'span'>)}>
         {children}
       </span>
     );
@@ -65,42 +73,60 @@ const components: Partial<Components> = {
   },
   h1: ({ node, children, ...props }) => {
     return (
-      <h1 className="text-3xl font-semibold mt-6 mb-2" {...props}>
+      <h1
+        className="text-3xl font-semibold mt-6 mb-2"
+        {...(props as ComponentPropsWithoutRef<'h1'>)}
+      >
         {children}
       </h1>
     );
   },
   h2: ({ node, children, ...props }) => {
     return (
-      <h2 className="text-2xl font-semibold mt-6 mb-2" {...props}>
+      <h2
+        className="text-2xl font-semibold mt-6 mb-2"
+        {...(props as ComponentPropsWithoutRef<'h2'>)}
+      >
         {children}
       </h2>
     );
   },
   h3: ({ node, children, ...props }) => {
     return (
-      <h3 className="text-xl font-semibold mt-6 mb-2" {...props}>
+      <h3
+        className="text-xl font-semibold mt-6 mb-2"
+        {...(props as ComponentPropsWithoutRef<'h3'>)}
+      >
         {children}
       </h3>
     );
   },
   h4: ({ node, children, ...props }) => {
     return (
-      <h4 className="text-lg font-semibold mt-6 mb-2" {...props}>
+      <h4
+        className="text-lg font-semibold mt-6 mb-2"
+        {...(props as ComponentPropsWithoutRef<'h4'>)}
+      >
         {children}
       </h4>
     );
   },
   h5: ({ node, children, ...props }) => {
     return (
-      <h5 className="text-base font-semibold mt-6 mb-2" {...props}>
+      <h5
+        className="text-base font-semibold mt-6 mb-2"
+        {...(props as ComponentPropsWithoutRef<'h5'>)}
+      >
         {children}
       </h5>
     );
   },
   h6: ({ node, children, ...props }) => {
     return (
-      <h6 className="text-sm font-semibold mt-6 mb-2" {...props}>
+      <h6
+        className="text-sm font-semibold mt-6 mb-2"
+        {...(props as ComponentPropsWithoutRef<'h6'>)}
+      >
         {children}
       </h6>
     );
