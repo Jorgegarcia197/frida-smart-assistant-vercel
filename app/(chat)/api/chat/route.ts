@@ -528,10 +528,24 @@ export async function POST(request: Request) {
 
         const hasMcpToolsForRequest = mcpActiveTools.length > 0;
 
+        // Same ToolSet as `streamText` so `convertToModelMessages` can serialize
+        // prior turns' tool outputs (especially dynamic MCP tools) for Bedrock/core.
+        const toolsForModel = {
+          getWeather,
+          createDocument: createDocument({ session, dataStream }),
+          updateDocument: updateDocument({ session, dataStream }),
+          requestSuggestions: requestSuggestions({
+            session,
+            dataStream,
+          }),
+          createMermaidDiagram: createMermaidDiagram({ session, dataStream }),
+          ...mcpTools,
+        };
+
         const result = streamText({
           model: myProvider.languageModel(selectedChatModel),
           system: systemPromptText,
-          messages: convertToModelMessages(uiMessages),
+          messages: convertToModelMessages(uiMessages, { tools: toolsForModel }),
           // Tool call + optional follow-up text needs more than one step
           stopWhen: stepCountIs(hasMcpToolsForRequest ? 12 : 5),
           toolChoice: hasMcpToolsForRequest ? 'auto' : undefined,
@@ -552,17 +566,7 @@ export async function POST(request: Request) {
                   'createMermaidDiagram',
                   ...mcpActiveTools,
                 ] as any),
-          tools: {
-            getWeather,
-            createDocument: createDocument({ session, dataStream }),
-            updateDocument: updateDocument({ session, dataStream }),
-            requestSuggestions: requestSuggestions({
-              session,
-              dataStream,
-            }),
-            createMermaidDiagram: createMermaidDiagram({ session, dataStream }),
-            ...mcpTools,
-          },
+          tools: toolsForModel,
         });
 
         result.consumeStream();

@@ -7,6 +7,8 @@ const generativeUiPromptSection = generativeUiCatalog.prompt({
   customRules: [
     'When the user asks for charts, metrics, trends, comparisons, or data visualization, stream JSONL UI patches (one JSON object per line) that build a Card with a Heading and a Chart (variant bar, line, or area) with realistic or illustrative data.',
     'Every Chart patch must include both `data` (array of row objects) and `series` (array of { dataKey, label, color }). Do not omit them. Each row must include the `xKey` field and every `series[].dataKey`; use numbers for plotted values when possible.',
+    'Follow-up chart requests: the thread may include prior MCP/database tool results. You MUST copy the numeric values from those tool outputs (or from your own prior message text) into Chart `data` rows. An empty `data` array is invalid and shows "No chart data" in the UI.',
+    'If you cannot find the raw rows in the conversation, call the same MCP tools again to fetch data before emitting Chart patches. Do not claim you lack data while tool results exist above.',
     'You may answer in normal prose first; add JSONL lines only when structured UI helps.',
     'Do not wrap JSONL in markdown code fences. Each patch line must be a single valid JSON object on its own line so the client can parse the stream (inline mode per json-render + AI SDK).',
   ],
@@ -101,7 +103,7 @@ export const systemPrompt = ({
 
   const mcpToolsSection =
     mcpToolNames && mcpToolNames.length > 0
-      ? `\n\nConnected MCP tools — you MUST call them for any question that needs live data, database queries, inventory, customers, revenue, products, or schemas. Do not say you lack access; use the tools first, then answer from the results.\n${mcpToolNames.map((n) => `- \`${n}\``).join('\n')}`
+      ? `\n\nConnected MCP tools — you MUST call them for any question that needs live data, database queries, inventory, customers, revenue, products, or schemas. Do not say you lack access; use the tools first, then answer from the results.\nWhen the user asks to chart or visualize data from an earlier turn, reuse the tool results already in this conversation or call the tools again if the numbers are missing.\n${mcpToolNames.map((n) => `- \`${n}\``).join('\n')}`
       : '';
 
   const genUiSection = `\n\n${generativeUiPromptSection}`;

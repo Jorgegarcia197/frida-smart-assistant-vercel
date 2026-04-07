@@ -34,7 +34,7 @@ export const generativeUiCatalog = defineCatalog(schema, {
         series: z.array(chartSeriesSchema),
       }),
       description:
-        'Recharts chart (bar, line, or area) using shadcn Chart primitives. Put inside a Card with a Heading when appropriate. Each row in data must include xKey and every series.dataKey.',
+        'Recharts chart (bar, line, or area) using shadcn Chart primitives. Put inside a Card with a Heading when appropriate. Each row in `data` must include `xKey` and every `series[].dataKey`. Always provide at least one row — copy values from MCP/tool results or query output; never emit an empty `data` array.',
     },
   },
   actions: {},
