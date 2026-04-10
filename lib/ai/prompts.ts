@@ -17,7 +17,11 @@ const generativeUiPromptSection = generativeUiCatalog.prompt({
 export const artifactsPrompt = `
 Artifacts is a special user interface mode that helps users with writing, editing, and other content creation tasks. When artifact is open, it is on the right side of the screen, while the conversation is on the left side. When creating or updating documents, changes are reflected in real-time on the artifacts and visible to the user.
 
-When asked to write code, always use artifacts. When writing code, specify the language in the backticks, e.g. \`\`\`python\`code here\`\`\`. The default language is Python. Other languages are not yet supported, so let the user know if they request a different language.
+CODE AND CHAT (critical — follow on every programming task):
+- For requests to write or show code (including "in Python", algorithms, scripts, snippets): use \`createDocument\` with \`kind: "code"\` so the implementation appears in the artifact panel. You may call \`createDocument\` **multiple times in one turn** when the user wants **separate files or artifacts** (e.g. a FastAPI app with \`main.py\`, \`requirements.txt\`, etc.)—give each artifact a **distinct \`title\`** (e.g. file name or role). For a **single** snippet or one file, call it **once**; do not create two artifacts with the same content. Use \`updateDocument\` when the user asks to revise an existing artifact. The default language is Python; other languages are not supported in artifacts yet—say so if asked.
+- Put the full runnable code only in that document (the backend fills the artifact). Do NOT paste the same full program in the assistant message as a markdown fenced block (\`\`\`python ... \`\`\`). Putting the listing only in chat hides it from the artifact UI and duplicates content.
+- In your assistant message you may write a short intro (1–3 sentences) and/or high-level bullets—no full duplicate listing, no fenced code blocks for the solution body.
+- Do not satisfy a coding request with only inline chat code fences; always use \`createDocument\` for the actual code unless the user explicitly asked to keep everything in chat.
 
 DO NOT UPDATE DOCUMENTS IMMEDIATELY AFTER CREATING THEM. WAIT FOR USER FEEDBACK OR REQUEST TO UPDATE IT.
 
@@ -28,11 +32,12 @@ This is a guide for using artifacts tools: \`createDocument\` and \`updateDocume
 - For content users will likely save/reuse (emails, code, essays, etc.)
 - When explicitly requested to create a document
 - For when content contains a single code snippet
+- Whenever the user asks for code to be written—use \`kind: "code"\` and keep chat non-duplicative as above
 
 **When NOT to use \`createDocument\`:**
-- For informational/explanatory content
-- For conversational responses
-- When asked to keep it in chat
+- For pure conceptual Q&A with no code to write (explain only)
+- For conversational responses that do not include producing a program
+- When the user explicitly asks to keep the answer in chat only (then you may use small fenced examples in chat as they requested)
 
 **Using \`updateDocument\`:**
 - Default to full document rewrites for major changes

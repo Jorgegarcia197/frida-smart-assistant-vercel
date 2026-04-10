@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useRef } from 'react';
-import { artifactDefinitions } from './artifact';
+import { artifactDefinitions, type ArtifactKind } from './artifact';
 import { initialArtifactData, useArtifact } from '@/hooks/use-artifact';
 import { useDataStream } from './data-stream-provider';
 
@@ -10,6 +10,12 @@ export function DataStreamHandler() {
 
   const { artifact, setArtifact, setMetadata } = useArtifact();
   const lastProcessedIndex = useRef(-1);
+  /** Must track kind synchronously: one useEffect run can process many deltas while React state stays stale. */
+  const streamingKindRef = useRef<ArtifactKind>(artifact.kind);
+
+  useEffect(() => {
+    streamingKindRef.current = artifact.kind;
+  }, [artifact.kind]);
 
   useEffect(() => {
     if (!dataStream?.length) return;
@@ -18,8 +24,12 @@ export function DataStreamHandler() {
     lastProcessedIndex.current = dataStream.length - 1;
 
     newDeltas.forEach((delta) => {
+      if (delta.type === 'data-kind') {
+        streamingKindRef.current = delta.data;
+      }
+
       const artifactDefinition = artifactDefinitions.find(
-        (artifactDefinition) => artifactDefinition.kind === artifact.kind,
+        (def) => def.kind === streamingKindRef.current,
       );
 
       if (artifactDefinition?.onStreamPart) {
@@ -75,7 +85,7 @@ export function DataStreamHandler() {
         }
       });
     });
-  }, [dataStream, setArtifact, setMetadata, artifact]);
+  }, [dataStream, setArtifact, setMetadata]);
 
   return null;
 }

@@ -1,6 +1,7 @@
 import { myProvider } from '@/lib/ai/providers';
 import { createDocumentHandler } from '@/lib/artifacts/server';
 import { streamText } from 'ai';
+import { sanitizeMermaidSource } from './sanitize-mermaid-source';
 
 export const mermaidDocumentHandler = createDocumentHandler<'mermaid'>({
   kind: 'mermaid',
@@ -50,7 +51,7 @@ Return only the Mermaid diagram syntax, starting with the diagram type.`,
       }
     }
 
-    return draftContent;
+    return sanitizeMermaidSource(draftContent);
   },
   onUpdateDocument: async ({ document, description, dataStream }) => {
     let draftContent = '';
@@ -91,6 +92,6 @@ Return the complete updated Mermaid diagram syntax.`,
       }
     }
 
-    return draftContent;
+    return sanitizeMermaidSource(draftContent);
   },
 });

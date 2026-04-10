@@ -1,13 +1,14 @@
-import { compare } from 'bcrypt-ts';
 import NextAuth, { type DefaultSession } from 'next-auth';
 import Credentials from 'next-auth/providers/credentials';
-import { getUser } from '@/lib/db/queries';
 import {
   syncFirebaseUserToFirestore,
-  validateFirebaseCredentials,
+  verifyFirebaseToken,
 } from '@/lib/auth/firebase-auth';
+import {
+  authorizeLocalTestCredentials,
+  ensureLocalTestUserInFirestore,
+} from '@/lib/auth/local-test-login';
 import { authConfig } from './auth.config';
-import { DUMMY_PASSWORD } from '@/lib/constants';
 import type { DefaultJWT } from 'next-auth/jwt';
 
 export type UserType = 'guest' | 'regular';
@@ -43,62 +44,45 @@ export const {
   ...authConfig,
   providers: [
     Credentials({
-      credentials: {},
-      async authorize({ email, password }: any) {
-        console.log('NextAuth authorize called for:', email);
+      credentials: {
+        email: { label: 'Email', type: 'email' },
+        password: { label: 'Password', type: 'password' },
+        idToken: { label: 'Firebase ID token', type: 'text' },
+      },
+      async authorize({ email, password, idToken }: any) {
+        if (idToken) {
+          const firebaseUser = await verifyFirebaseToken(idToken);
 
-        // First try to validate credentials with Firebase Auth
-        const firebaseUser = await validateFirebaseCredentials(email, password);
+          if (!firebaseUser || firebaseUser.disabled) {
+            return null;
+          }
 
-        if (firebaseUser) {
-          console.log(
-            'Firebase Auth validation successful, syncing to Firestore...',
-          );
-          // If Firebase Auth validation succeeds, sync to Firestore if needed
           try {
-            const syncedUser = await syncFirebaseUserToFirestore(
-              firebaseUser.uid,
-            );
-            console.log('User sync successful, returning user object');
+            await syncFirebaseUserToFirestore(firebaseUser.uid);
+
             return {
               id: firebaseUser.uid,
               email: firebaseUser.email,
               type: 'regular',
             };
           } catch (error) {
-            console.error('Firebase sync error:', error);
+            console.error('Firebase token sign-in sync error:', error);
             return null;
           }
-        } else {
-          console.log(
-            'Firebase Auth validation failed, trying Firestore fallback...',
-          );
         }
 
-        // Fallback to Firestore-only users (for backward compatibility)
-        const users = await getUser(email);
-
-        if (users.length === 0) {
-          await compare(password, DUMMY_PASSWORD);
-          return null;
+        const localUser = authorizeLocalTestCredentials(email, password);
+        if (localUser) {
+          try {
+            await ensureLocalTestUserInFirestore(localUser.id, localUser.email);
+            return localUser;
+          } catch (error) {
+            console.error('Local test user Firestore sync error:', error);
+            return null;
+          }
         }
 
-        const [user] = users;
-
-        if (!user.password) {
-          await compare(password, DUMMY_PASSWORD);
-          return null;
-        }
-
-        const passwordsMatch = await compare(password, user.password);
-
-        if (!passwordsMatch) {
-          console.log('Firestore password validation failed');
-          return null;
-        }
-
-        console.log('Firestore password validation successful, returning user');
-        return { ...user, type: 'regular' };
+        return null;
       },
     }),
   ],

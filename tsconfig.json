@@ -30,6 +30,7 @@
   },
   "include": [
     "next-env.d.ts",
+    "lib/ai/pdf-parse-lib.d.ts",
     "**/*.ts",
     "**/*.tsx",
     ".next/types/**/*.ts",

@@ -4,6 +4,7 @@ import { RotateCcw, FileImage } from 'lucide-react';
 import { toast } from 'sonner';
 import { useEffect, useState, useRef } from 'react';
 import mermaid from 'mermaid';
+import { sanitizeMermaidSource } from './sanitize-mermaid-source';
 import {
   Card,
   CardContent,
@@ -109,6 +110,12 @@ function MermaidRenderer({
         return;
       }
 
+      const cleanDiagram = sanitizeMermaidSource(diagram);
+      if (!cleanDiagram) {
+        setError('Diagram content is empty after removing markdown fences.');
+        return;
+      }
+
       try {
         setError(null);
         setRenderedContent(null); // Clear previous content
@@ -125,7 +132,7 @@ function MermaidRenderer({
         const diagramId = `mermaid-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
 
         // Render the diagram to SVG
-        const { svg } = await mermaid.render(diagramId, diagram);
+        const { svg } = await mermaid.render(diagramId, cleanDiagram);
 
         setRenderedContent(svg);
       } catch (err) {
@@ -141,7 +148,7 @@ function MermaidRenderer({
   <p style="margin: 0 0 0.5rem 0; font-size: 0.8rem; color: #991b1b;">${err instanceof Error ? err.message : 'Unknown error'}</p>
   <details>
     <summary style="cursor: pointer; font-size: 0.8rem; color: #7c2d12;">Show diagram code</summary>
-    <pre style="margin: 0.5rem 0 0 0; font-family: monospace; font-size: 0.7rem; white-space: pre-wrap; color: #555; background: #f9f9f9; padding: 0.5rem; border-radius: 2px;">${diagram}</pre>
+    <pre style="margin: 0.5rem 0 0 0; font-family: monospace; font-size: 0.7rem; white-space: pre-wrap; color: #555; background: #f9f9f9; padding: 0.5rem; border-radius: 2px;">${sanitizeMermaidSource(diagram)}</pre>
   </details>
 </div>`;
         setRenderedContent(fallbackContent);
@@ -153,7 +160,7 @@ function MermaidRenderer({
 
   // Function to download the diagram code
   const downloadCode = () => {
-    const blob = new Blob([diagram], { type: 'text/plain' });
+    const blob = new Blob([sanitizeMermaidSource(diagram)], { type: 'text/plain' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
@@ -429,7 +436,7 @@ export const mermaidArtifact = new Artifact<'mermaid', MermaidArtifactMetadata>(
         icon: <CopyIcon size={18} />,
         description: 'Copy diagram code',
         onClick: ({ content }) => {
-          navigator.clipboard.writeText(content);
+          navigator.clipboard.writeText(sanitizeMermaidSource(content));
           toast.success('Diagram code copied to clipboard!');
         },
       },
@@ -437,7 +444,7 @@ export const mermaidArtifact = new Artifact<'mermaid', MermaidArtifactMetadata>(
         icon: <DownloadIcon size={18} />,
         description: 'Download diagram code (.mmd)',
         onClick: ({ content, metadata }) => {
-          const blob = new Blob([content], { type: 'text/plain' });
+          const blob = new Blob([sanitizeMermaidSource(content)], { type: 'text/plain' });
           const url = URL.createObjectURL(blob);
           const a = document.createElement('a');
           a.href = url;
@@ -463,9 +470,10 @@ export const mermaidArtifact = new Artifact<'mermaid', MermaidArtifactMetadata>(
             });
 
             const diagramId = `mermaid-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+            const clean = sanitizeMermaidSource(content);
 
             mermaid.default
-              .render(diagramId, content)
+              .render(diagramId, clean)
               .then(({ svg }) => {
                 const blob = new Blob([svg], { type: 'image/svg+xml' });
                 const url = URL.createObjectURL(blob);
@@ -499,9 +507,10 @@ export const mermaidArtifact = new Artifact<'mermaid', MermaidArtifactMetadata>(
             });
 
             const diagramId = `mermaid-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+            const clean = sanitizeMermaidSource(content);
 
             mermaid.default
-              .render(diagramId, content)
+              .render(diagramId, clean)
               .then(({ svg }) => {
                 // Convert SVG to PNG
                 const img = new Image();

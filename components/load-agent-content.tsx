@@ -7,17 +7,21 @@ import { Card, CardContent } from './ui/card';
 import { toast } from 'sonner';
 import { useEffect, useState } from 'react';
 import { X, Bot, Loader2, RefreshCw } from 'lucide-react';
-import { useAgent } from './agent-provider';
+import { useAgentForChat } from './agent-provider';
 import { useAgentsByDeployment } from '@/hooks/use-agents';
 
 type LoadAgentContentProps = {
+  chatId: string;
   setIsLoadAgentOpen: (isOpen: boolean) => void;
 };
 
-const LoadAgentContent = ({ setIsLoadAgentOpen }: LoadAgentContentProps) => {
+const LoadAgentContent = ({
+  chatId,
+  setIsLoadAgentOpen,
+}: LoadAgentContentProps) => {
   const { status } = useSession();
   const { setCurrentAgent, setIsLoadingAgent, isLoadingAgent, currentAgent } =
-    useAgent();
+    useAgentForChat(chatId);
   const [selectedAgentId, setSelectedAgentId] = useState<string>('');
 
   const { agents, isLoading, error, mutate } = useAgentsByDeployment(

@@ -2,52 +2,75 @@
 
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { useActionState, useEffect, useState } from 'react';
+import { useState } from 'react';
+import { OAuthProvider, signInWithPopup } from 'firebase/auth';
 
-import { AuthForm } from '@/components/auth-form';
-import { SubmitButton } from '@/components/submit-button';
+import { Button } from '@/components/ui/button';
+import { firebaseAuthClient } from '@/lib/firebase-client';
 
-import { register, type RegisterActionState } from '../actions';
+import { loginWithFirebaseIdToken } from '../actions';
 import { toast } from '@/components/toast';
 import { useSession } from 'next-auth/react';
 
 export default function Page() {
   const router = useRouter();
-
-  const [email, setEmail] = useState('');
-  const [isSuccessful, setIsSuccessful] = useState(false);
-
-  const [state, formAction] = useActionState<RegisterActionState, FormData>(
-    register,
-    {
-      status: 'idle',
-    },
-  );
-
+  const [isMicrosoftLoading, setIsMicrosoftLoading] = useState(false);
   const { update: updateSession } = useSession();
 
-  useEffect(() => {
-    if (state.status === 'user_exists') {
-      toast({ type: 'error', description: 'Account already exists!' });
-    } else if (state.status === 'failed') {
-      toast({ type: 'error', description: 'Failed to create account!' });
-    } else if (state.status === 'invalid_data') {
+  const handleMicrosoftSignIn = async () => {
+    setIsMicrosoftLoading(true);
+
+    try {
+      const provider = new OAuthProvider('microsoft.com');
+      const result = await signInWithPopup(firebaseAuthClient, provider);
+      const idToken = await result.user.getIdToken();
+
+      const signInResult = await loginWithFirebaseIdToken(idToken);
+      if (signInResult.status !== 'success') {
+        toast({
+          type: 'error',
+          description: 'Failed to continue with Microsoft.',
+        });
+        return;
+      }
+
+      await updateSession();
+      router.push('/');
+    } catch (error) {
+      const firebaseError = error as { code?: string };
+
+      if (firebaseError.code === 'auth/popup-closed-by-user') {
+        toast({
+          type: 'error',
+          description: 'Sign-up popup was closed before completion.',
+        });
+        return;
+      }
+
+      if (firebaseError.code === 'auth/popup-blocked') {
+        toast({
+          type: 'error',
+          description: 'Popup was blocked. Please allow popups and try again.',
+        });
+        return;
+      }
+
+      if (firebaseError.code === 'auth/account-exists-with-different-credential') {
+        toast({
+          type: 'error',
+          description:
+            'An account with this email already exists with another sign-in method.',
+        });
+        return;
+      }
+
       toast({
         type: 'error',
-        description: 'Failed validating your submission!',
+        description: 'Microsoft sign-up failed. Please try again.',
       });
-    } else if (state.status === 'success') {
-      toast({ type: 'success', description: 'Account created successfully!' });
-
-      setIsSuccessful(true);
-      updateSession();
-      router.refresh();
+    } finally {
+      setIsMicrosoftLoading(false);
     }
-  }, [state]);
-
-  const handleSubmit = (formData: FormData) => {
-    setEmail(formData.get('email') as string);
-    formAction(formData);
   };
 
   return (
@@ -56,11 +79,19 @@ export default function Page() {
         <div className="flex flex-col items-center justify-center gap-2 px-4 text-center sm:px-16">
           <h3 className="text-xl font-semibold dark:text-zinc-50">Sign Up</h3>
           <p className="text-sm text-gray-500 dark:text-zinc-400">
-            Create an account with your email and password
+            Create your account with Microsoft
           </p>
         </div>
-        <AuthForm action={handleSubmit} defaultEmail={email}>
-          <SubmitButton isSuccessful={isSuccessful}>Sign Up</SubmitButton>
+        <div className="px-4 sm:px-16 flex flex-col gap-6">
+          <Button
+            type="button"
+            onClick={handleMicrosoftSignIn}
+            disabled={isMicrosoftLoading}
+          >
+            {isMicrosoftLoading
+              ? 'Connecting to Microsoft...'
+              : 'Continue with Microsoft'}
+          </Button>
           <p className="text-center text-sm text-gray-600 mt-4 dark:text-zinc-400">
             {'Already have an account? '}
             <Link
@@ -71,7 +102,7 @@ export default function Page() {
             </Link>
             {' instead.'}
           </p>
-        </AuthForm>
+        </div>
       </div>
     </div>
   );

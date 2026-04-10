@@ -5,6 +5,7 @@ import {
   convertToModelMessages,
   JsonToSseTransformStream,
   dynamicTool,
+  smoothStream,
 } from 'ai';
 import { pipeJsonRender } from '@json-render/core';
 import { auth } from '@/app/(auth)/auth';
@@ -26,6 +27,7 @@ import { updateDocument } from '@/lib/ai/tools/update-document';
 import { requestSuggestions } from '@/lib/ai/tools/request-suggestions';
 import { getWeather } from '@/lib/ai/tools/get-weather';
 import { createMermaidDiagram } from '@/lib/ai/tools/create-mermaid-diagram';
+import { expandPdfFilePartsForModel } from '@/lib/ai/expand-pdf-parts-for-model';
 import { myProvider } from '@/lib/ai/providers';
 import { getMcpClientInstance } from '@/lib/mcp/mcp-singleton-instance';
 import { normalizeAgentMcps } from '@/lib/agents/normalize-agent-mcps';
@@ -278,7 +280,10 @@ async function getMcpToolsForAI(
 
       for (const mcpTool of server.tools) {
         const internalName = `${server.name}__${mcpTool.name}`;
-        const toolName = sanitizeBedrockToolName(internalName, bedrockToolNames);
+        const toolName = sanitizeBedrockToolName(
+          internalName,
+          bedrockToolNames,
+        );
 
         // Convert JSON Schema to Zod schema for parameters
         let parametersSchema: z.ZodTypeAny = z.object({});
@@ -468,8 +473,7 @@ export async function POST(request: Request) {
       }
     }
 
-    const effectiveAgentMcpConfig =
-      agentMcpConfig ?? chat?.agentMcpConfig;
+    const effectiveAgentMcpConfig = agentMcpConfig ?? chat?.agentMcpConfig;
     const effectiveAgentKnowledgeBaseIds =
       agentKnowledgeBaseIds ?? chat?.agentKnowledgeBaseIds;
     const effectiveAgentSystemPrompt =
@@ -479,6 +483,8 @@ export async function POST(request: Request) {
 
     const messagesFromDb = await getMessagesByChatId({ id });
     const uiMessages = [...convertToUIMessages(messagesFromDb), message];
+    /** PDF `file` parts are unsupported by the OpenAI-compatible provider; expand to text. */
+    const uiMessagesForModel = await expandPdfFilePartsForModel(uiMessages);
 
     const { longitude, latitude, city, country } = geolocation(request);
 
@@ -545,7 +551,12 @@ export async function POST(request: Request) {
         const result = streamText({
           model: myProvider.languageModel(selectedChatModel),
           system: systemPromptText,
-          messages: convertToModelMessages(uiMessages, { tools: toolsForModel }),
+          messages: convertToModelMessages(uiMessagesForModel, {
+            tools: toolsForModel,
+          }),
+          // Word-level smoothing (matches text artifacts). pipeJsonRender buffers JSONL
+          // lines until a newline, so inline generative-ui patches stay valid.
+          experimental_transform: smoothStream({ chunking: 'word' }),
           // Tool call + optional follow-up text needs more than one step
           stopWhen: stepCountIs(hasMcpToolsForRequest ? 12 : 5),
           toolChoice: hasMcpToolsForRequest ? 'auto' : undefined,
@@ -569,8 +580,8 @@ export async function POST(request: Request) {
           tools: toolsForModel,
         });
 
-        result.consumeStream();
-
+        // Single consumer: merge() already reads `fullStream` via `toUIMessageStream`.
+        // A second `consumeStream()` would tee the model stream again and race the UI merge.
         dataStream.merge(
           pipeJsonRender(
             result.toUIMessageStream({

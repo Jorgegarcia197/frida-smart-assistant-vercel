@@ -19,6 +19,10 @@ export interface LoginActionState {
   status: 'idle' | 'in_progress' | 'success' | 'failed' | 'invalid_data';
 }
 
+export interface FirebaseTokenLoginActionState {
+  status: 'idle' | 'success' | 'failed' | 'invalid_data';
+}
+
 export const login = async (
   _: LoginActionState,
   formData: FormData,
@@ -48,6 +52,37 @@ export const login = async (
     }
 
     console.error('Login error:', error);
+    return { status: 'failed' };
+  }
+};
+
+export const loginWithFirebaseIdToken = async (
+  idToken: string,
+): Promise<FirebaseTokenLoginActionState> => {
+  try {
+    const validatedData = z
+      .object({
+        idToken: z.string().min(1),
+      })
+      .parse({ idToken });
+
+    const result = await signIn('credentials', {
+      idToken: validatedData.idToken,
+      redirect: false,
+    });
+
+    if (result?.error) {
+      console.error('Firebase token sign-in error:', result.error);
+      return { status: 'failed' };
+    }
+
+    return { status: 'success' };
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      return { status: 'invalid_data' };
+    }
+
+    console.error('Firebase token login error:', error);
     return { status: 'failed' };
   }
 };

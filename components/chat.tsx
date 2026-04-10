@@ -22,7 +22,7 @@ import { ChatSDKError } from '@/lib/errors';
 import type { Attachment, ChatMessage } from '@/lib/types';
 import { useDataStream } from './data-stream-provider';
 import { DefaultChatTransport } from 'ai';
-import { useAgent } from './agent-provider';
+import { useAgentForChat } from './agent-provider';
 
 /** Match server + ModelSelector; avoids stale `initialChatModel` after client-side model change. */
 function readChatModelCookie(fallback: string): string {
@@ -64,7 +64,7 @@ export function Chat({
 }) {
   const { mutate } = useSWRConfig();
   const { setDataStream } = useDataStream();
-  const { currentAgent } = useAgent();
+  const { currentAgent } = useAgentForChat(id);
 
   // Refs read inside prepareSendMessagesRequest (Chat keeps the initial transport from
   // the first render, so we rely on refs — updated every render so sends never race useEffect).
@@ -107,7 +107,6 @@ export function Chat({
   } = useChat<ChatMessage>({
     id,
     messages: initialMessages,
-    experimental_throttle: 100,
     generateId: generateUUID,
     transport: new DefaultChatTransport({
       api: '/api/chat',

@@ -2,13 +2,44 @@
 
 ## Overview
 
-Next.js chat app with Bedrock, Firestore chats, and agent MCP (SSE) via `@ai-sdk/mcp`.
+Next.js chat app with OpenAI-compatible AI SDK providers, Firestore chats, and agent MCP (SSE) via `@ai-sdk/mcp`.
 
 ## User Defined Namespaces
 
 - (none defined)
 
 ## Patterns
+
+### PDF uploads vs OpenAI-compatible chat (`lib/ai/expand-pdf-parts-for-model.ts`)
+
+- User messages can include `file` parts with `application/pdf`, but many OpenAI-compatible gateways throw `AI_UnsupportedFunctionalityError` for PDF file parts.
+- Before `convertToModelMessages`, `expandPdfFilePartsForModel` fetches the PDF URL, runs `pdf-parse` server-side, and replaces each PDF file part with a `text` part (truncated at 120k chars). Stored chat messages keep original parts for the UI.
+- Import `pdf-parse/lib/pdf-parse.js` (not `pdf-parse`): the package root `index.js` runs a debug `readFileSync('./test/data/05-versions-space.pdf')` when `!module.parent`, which breaks under Next/Turbopack (`ENOENT`).
+
+### OpenAI-compatible provider routing (`lib/ai/providers.ts`)
+
+- Production provider now uses `createOpenAICompatible` with lazy initialization (`OPENAI_COMPATIBLE_API` / `LLM_API_BASE_URL` + `LLMOPS_API_KEY` / `LLM_API_KEY` / `OPENAI_API_KEY`).
+- Logical model IDs are unchanged at call sites: `chat-model`, `chat-model-reasoning`, `title-model`, `artifact-model`, and `embeddings-model`.
+- Per-role model overrides are supported via `CHAT_MODEL`, `REASONING_MODEL`, `TITLE_MODEL`, `ARTIFACT_MODEL`, and `EMBEDDING_MODEL`; all chat roles fall back to `LLM_MODEL_NAME`.
+- Reasoning model still uses `extractReasoningMiddleware({ tagName: 'think' })` around the OpenAI-compatible language model.
+- Embeddings route through the same provider (`textEmbeddingModel('embeddings-model')`), and `lib/embeddings/azure.ts` remains the single helper entrypoint with generic logging.
+
+### Data stream → artifact routing (`components/data-stream-handler.tsx`)
+
+- `onStreamPart` must use the artifact kind for the **current stream**, not `artifact.kind` from React state: a single `useEffect` tick can process many data parts while state is still stale (e.g. `data-codeDelta` was routed to the text artifact and ignored). Use a ref updated when handling `data-kind` (and sync from `artifact.kind` on change).
+
+### Artifacts vs chat code (`lib/ai/prompts.ts` — `artifactsPrompt`)
+
+- Models often streamed full ` ```python ` solutions in the assistant message (Streamdown in `components/elements/response.tsx`) while the code artifact stayed empty. Prompt now forbids duplicating the full listing in chat when using `createDocument` for code and requires the implementation to live in the artifact path.
+
+### Code artifact generation (`artifacts/code/server.ts`)
+
+- Primary path: `streamObject` with `{ code: string }`. If the gateway breaks JSON/schema streaming (logs may show Python `NoneType` / `len` from LiteLLM or similar), the stream can finish with no `code` → empty artifact.
+- Fallback: `streamText` + extract body from a ` ```python ` fence (or generic fence), then emit `data-codeDelta`. Log line: `[code artifact] streamObject produced no code… Trying streamText fallback.`
+
+### Multiple `createDocument` calls (`lib/ai/prompts.ts`)
+
+- No server-side cap: multi-file requests (e.g. FastAPI project) may use several `createDocument` calls in one turn with distinct titles. Prompt asks the model to avoid duplicate same-content artifacts for a single-file answer.
 
 ### json-render generative UI (inline)
 

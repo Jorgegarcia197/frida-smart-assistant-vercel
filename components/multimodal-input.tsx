@@ -18,7 +18,7 @@ import { ArrowUpIcon, PaperclipIcon, StopIcon } from './icons';
 import { PreviewAttachment } from './preview-attachment';
 import { Button } from './ui/button';
 import { SuggestedActions } from './suggested-actions';
-import { useAgent } from './agent-provider';
+import { useAgentForChat } from './agent-provider';
 import equal from 'fast-deep-equal';
 import type { UseChatHelpers } from '@ai-sdk/react';
 import { AnimatePresence, motion } from 'framer-motion';
@@ -118,7 +118,8 @@ function PureMultimodalInput({
   const [isMCPHubOpen, setIsMCPHubOpen] = useState(false);
   const [isLoadAgentOpen, setIsLoadAgentOpen] = useState(false);
 
-  const { hasConversationStarted, setHasConversationStarted } = useAgent();
+  const { hasConversationStarted, setHasConversationStarted } =
+    useAgentForChat(chatId);
 
   const submitForm = useCallback(() => {
     window.history.replaceState({}, '', `/chat/${chatId}`);
@@ -216,6 +217,7 @@ function PureMultimodalInput({
   );
 
   const { isAtBottom, scrollToBottom } = useScrollToBottom();
+  const isModelBusy = status === 'submitted' || status === 'streaming';
 
   useEffect(() => {
     if (status === 'submitted') {
@@ -275,8 +277,13 @@ function PureMultimodalInput({
         className="bg-gray-50 rounded-3xl border border-gray-300 shadow-none transition-all duration-200 dark:bg-sidebar dark:border-sidebar-border hover:ring-1 hover:ring-primary/30 focus-within:ring-1 focus-within:ring-primary/50"
         onSubmit={(event) => {
           event.preventDefault();
-          if (status !== 'ready') {
-            toast.error('Please wait for the model to finish its response!');
+          if (isModelBusy) {
+            // Some providers can leave chat status stuck after visible completion.
+            // Force-stop stale state and retry the new user message immediately.
+            stop();
+            window.setTimeout(() => {
+              submitForm();
+            }, 0);
           } else {
             submitForm();
           }
@@ -340,7 +347,7 @@ function PureMultimodalInput({
                 e.preventDefault();
                 setIsMCPHubOpen(true);
               }}
-              disabled={status !== 'ready'}
+              disabled={isModelBusy}
             >
               <Server className="size-4" />
             </Button>
@@ -351,7 +358,7 @@ function PureMultimodalInput({
                 e.preventDefault();
                 setIsLoadAgentOpen(true);
               }}
-              disabled={status !== 'ready' || hasConversationStarted}
+              disabled={isModelBusy || hasConversationStarted}
               title={
                 hasConversationStarted
                   ? 'Cannot change agent mid-conversation'
@@ -370,10 +377,13 @@ function PureMultimodalInput({
               isOpen={isLoadAgentOpen}
               onClose={() => setIsLoadAgentOpen(false)}
             >
-              <LoadAgentContent setIsLoadAgentOpen={setIsLoadAgentOpen} />
+              <LoadAgentContent
+                chatId={chatId}
+                setIsLoadAgentOpen={setIsLoadAgentOpen}
+              />
             </SidebarPortal>
           </PromptInputTools>
-          {status === 'submitted' ? (
+          {isModelBusy ? (
             <StopButton stop={stop} setMessages={setMessages} />
           ) : (
             <PromptInputSubmit
@@ -398,6 +408,7 @@ export const MultimodalInput = memo(
     if (!equal(prevProps.attachments, nextProps.attachments)) return false;
     if (prevProps.selectedVisibilityType !== nextProps.selectedVisibilityType)
       return false;
+    if (prevProps.chatId !== nextProps.chatId) return false;
 
     return true;
   },
@@ -418,7 +429,7 @@ function PureAttachmentsButton({
         event.preventDefault();
         fileInputRef.current?.click();
       }}
-      disabled={status !== 'ready'}
+      disabled={status === 'submitted' || status === 'streaming'}
       variant="ghost"
     >
       <PaperclipIcon size={14} />

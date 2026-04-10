@@ -6,7 +6,7 @@ import { memo, useMemo } from 'react';
 import type { UseChatHelpers } from '@ai-sdk/react';
 import type { VisibilityType } from './visibility-selector';
 import type { ChatMessage } from '@/lib/types';
-import { useAgent } from './agent-provider';
+import { useAgentForChat } from './agent-provider';
 import { transformConversationStarters } from '@/lib/transform-conversation-starters';
 
 interface SuggestedActionsProps {
@@ -20,7 +20,8 @@ function PureSuggestedActions({
   sendMessage,
   selectedVisibilityType,
 }: SuggestedActionsProps) {
-  const { currentAgent, setHasConversationStarted } = useAgent();
+  const { currentAgent, setHasConversationStarted } =
+    useAgentForChat(chatId);
 
   // Default suggested actions as fallback
   const defaultSuggestedActions = [

@@ -1,59 +1,122 @@
 'use client';
 
 import { useRouter } from 'next/navigation';
-import { useActionState, useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
+import { OAuthProvider, signInWithPopup } from 'firebase/auth';
 import { toast } from '@/components/toast';
 
-import { AuthForm } from '@/components/auth-form';
-import { SubmitButton } from '@/components/submit-button';
-import { PasswordResetForm } from '@/components/password-reset-form';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { firebaseAuthClient } from '@/lib/firebase-client';
+import Link from 'next/link';
 
-import { login, type LoginActionState } from '../actions';
+import { login, loginWithFirebaseIdToken } from '../actions';
 import { useSession } from 'next-auth/react';
+
+function isBrowserLocalhostHostname(hostname: string): boolean {
+  const h = hostname.toLowerCase();
+  return (
+    h === 'localhost' ||
+    h === '127.0.0.1' ||
+    h === '[::1]' ||
+    h.endsWith('.localhost')
+  );
+}
 
 export default function Page() {
   const router = useRouter();
-
-  const [email, setEmail] = useState('');
-  const [isSuccessful, setIsSuccessful] = useState(false);
-  const [isPasswordResetOpen, setIsPasswordResetOpen] = useState(false);
-
-  const [state, formAction] = useActionState<LoginActionState, FormData>(
-    login,
-    {
-      status: 'idle',
-    },
-  );
-
-  const { update: updateSession, data: session } = useSession();
+  const [isMicrosoftLoading, setIsMicrosoftLoading] = useState(false);
+  const [isLocalLoginLoading, setIsLocalLoginLoading] = useState(false);
+  const [showLocalLogin, setShowLocalLogin] = useState(false);
+  const { update: updateSession } = useSession();
 
   useEffect(() => {
-    if (!state || !state.status) return;
+    setShowLocalLogin(isBrowserLocalhostHostname(window.location.hostname));
+  }, []);
 
-    console.log('Login state changed:', state.status);
+  const handleMicrosoftSignIn = async () => {
+    setIsMicrosoftLoading(true);
 
-    if (state.status === 'failed') {
+    try {
+      const provider = new OAuthProvider('microsoft.com');
+      const result = await signInWithPopup(firebaseAuthClient, provider);
+      const idToken = await result.user.getIdToken();
+
+      const signInResult = await loginWithFirebaseIdToken(idToken);
+      if (signInResult.status !== 'success') {
+        toast({
+          type: 'error',
+          description: 'Failed to sign in with Microsoft.',
+        });
+        return;
+      }
+
+      await updateSession();
+      router.push('/');
+    } catch (error) {
+      const firebaseError = error as { code?: string };
+
+      if (firebaseError.code === 'auth/popup-closed-by-user') {
+        toast({
+          type: 'error',
+          description: 'Sign-in popup was closed before completion.',
+        });
+        return;
+      }
+
+      if (firebaseError.code === 'auth/popup-blocked') {
+        toast({
+          type: 'error',
+          description: 'Popup was blocked. Please allow popups and try again.',
+        });
+        return;
+      }
+
+      if (
+        firebaseError.code === 'auth/account-exists-with-different-credential'
+      ) {
+        toast({
+          type: 'error',
+          description:
+            'An account with this email already exists with another sign-in method.',
+        });
+        return;
+      }
+
       toast({
         type: 'error',
-        description: 'Invalid credentials!',
+        description: 'Microsoft sign-in failed. Please try again.',
       });
-    } else if (state.status === 'invalid_data') {
-      toast({
-        type: 'error',
-        description: 'Failed validating your submission!',
-      });
-    } else if (state.status === 'success' && !isSuccessful) {
-      console.log('Login successful, redirecting...');
-      setIsSuccessful(true);
-      updateSession().then(() => {
-        router.push('/');
-      });
+    } finally {
+      setIsMicrosoftLoading(false);
     }
-  }, [state, router, isSuccessful, updateSession, session]);
+  };
 
-  const handleSubmit = (formData: FormData) => {
-    setEmail(formData.get('email') as string);
-    formAction(formData);
+  const handleLocalLogin = async (formData: FormData) => {
+    setIsLocalLoginLoading(true);
+    try {
+      const result = await login({ status: 'idle' }, formData);
+      if (result.status === 'success') {
+        await updateSession();
+        router.push('/');
+        return;
+      }
+      if (result.status === 'invalid_data') {
+        toast({
+          type: 'error',
+          description: 'Enter a valid email and password (min. 6 characters).',
+        });
+        return;
+      }
+      toast({
+        type: 'error',
+        description:
+          'Sign-in failed. On localhost, set LOCAL_AUTH_TEST_EMAIL and LOCAL_AUTH_TEST_PASSWORD in .env.local (development only).',
+      });
+    } finally {
+      setIsLocalLoginLoading(false);
+    }
   };
 
   return (
@@ -62,30 +125,71 @@ export default function Page() {
         <div className="flex flex-col items-center justify-center gap-2 px-4 text-center sm:px-16">
           <h3 className="text-xl font-semibold dark:text-zinc-50">Sign In</h3>
           <p className="text-sm text-gray-500 dark:text-zinc-400">
-            Use your email and password to sign in
+            Sign in with your Microsoft account
           </p>
         </div>
-        <AuthForm action={handleSubmit} defaultEmail={email}>
-          <div className="flex flex-col gap-4">
-            <SubmitButton isSuccessful={isSuccessful}>Sign in</SubmitButton>
-            <div className="text-center">
-              <button
-                type="button"
-                onClick={() => setIsPasswordResetOpen(true)}
-                className="text-sm text-blue-600 hover:text-blue-500 dark:text-blue-400 dark:hover:text-blue-300 underline"
-              >
-                Forgot your password?
-              </button>
-            </div>
-          </div>
-        </AuthForm>
-      </div>
+        <div className="px-4 sm:px-16 flex flex-col gap-6">
+          <Button
+            type="button"
+            onClick={handleMicrosoftSignIn}
+            disabled={isMicrosoftLoading}
+          >
+            {isMicrosoftLoading
+              ? 'Connecting to Microsoft...'
+              : 'Continue with Microsoft'}
+          </Button>
 
-      <PasswordResetForm
-        isOpen={isPasswordResetOpen}
-        onClose={() => setIsPasswordResetOpen(false)}
-        defaultEmail={email}
-      />
+          {showLocalLogin ? (
+            <div className="flex flex-col gap-4 pt-2 border-t border-border">
+              <p className="text-center text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                Local testing only
+              </p>
+              <form action={handleLocalLogin} className="flex flex-col gap-3">
+                <div className="flex flex-col gap-2">
+                  <Label htmlFor="local-email">Email</Label>
+                  <Input
+                    id="local-email"
+                    name="email"
+                    type="email"
+                    autoComplete="username"
+                    required
+                    disabled={isLocalLoginLoading}
+                  />
+                </div>
+                <div className="flex flex-col gap-2">
+                  <Label htmlFor="local-password">Password</Label>
+                  <Input
+                    id="local-password"
+                    name="password"
+                    type="password"
+                    autoComplete="current-password"
+                    required
+                    minLength={6}
+                    disabled={isLocalLoginLoading}
+                  />
+                </div>
+                <Button
+                  type="submit"
+                  variant="secondary"
+                  disabled={isLocalLoginLoading}
+                >
+                  {isLocalLoginLoading ? 'Signing in…' : 'Sign in (localhost)'}
+                </Button>
+              </form>
+            </div>
+          ) : null}
+
+          <p className="text-center text-sm text-gray-600 dark:text-zinc-400">
+            Need a new account?{' '}
+            <Link
+              href="/register"
+              className="font-semibold text-gray-800 hover:underline dark:text-zinc-200"
+            >
+              Continue with Microsoft on sign up
+            </Link>
+          </p>
+        </div>
+      </div>
     </div>
   );
 }

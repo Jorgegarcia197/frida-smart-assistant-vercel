@@ -45,6 +45,18 @@ export function createDocumentHandler<T extends ArtifactKind>(config: {
   return {
     kind: config.kind,
     onCreateDocument: async (args: CreateDocumentCallbackProps) => {
+      // Persist immediately so `getDocumentById` succeeds if the model calls
+      // `updateDocument` in a follow-up step before streaming finishes.
+      if (args.session?.user?.id) {
+        await saveDocument({
+          id: args.id,
+          title: args.title,
+          content: '',
+          kind: config.kind,
+          userId: args.session.user.id,
+        });
+      }
+
       const draftContent = await config.onCreateDocument({
         id: args.id,
         title: args.title,

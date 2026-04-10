@@ -1,8 +1,8 @@
 import { motion } from 'framer-motion';
-import { useAgent } from './agent-provider';
+import { useAgentForChat } from './agent-provider';
 
-export const Greeting = () => {
-  const { currentAgent } = useAgent();
+export const Greeting = ({ chatId }: { chatId: string }) => {
+  const { currentAgent } = useAgentForChat(chatId);
 
   // Get a random greeting from the agent, or use default
   const getGreeting = () => {
