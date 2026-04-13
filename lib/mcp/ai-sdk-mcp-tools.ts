@@ -8,7 +8,7 @@
  * which broke servers that require arguments (e.g. `query` on `execute_query`).
  */
 import { createMCPClient, type MCPClient } from '@ai-sdk/mcp';
-import type { FlexibleSchema } from '@ai-sdk/provider-utils';
+import type { FlexibleSchema, ToolResultOutput } from '@ai-sdk/provider-utils';
 import { dynamicTool } from 'ai';
 import { z } from 'zod/v3';
 
@@ -21,7 +21,7 @@ type McpSourceTool = {
     toolCallId: string;
     input: unknown;
     output: unknown;
-  }) => unknown;
+  }) => ToolResultOutput | PromiseLike<ToolResultOutput>;
 };
 
 function wrapMcpToolForBedrock(
