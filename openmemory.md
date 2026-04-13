@@ -51,8 +51,26 @@ Next.js chat app with OpenAI-compatible AI SDK providers, Firestore chats, and a
 - shadcn `Chart` primitives: `components/ui/chart.tsx`.
 - **Tailwind:** do not add `node_modules/@json-render/shadcn` to `content` — the package includes Tailwind v4-only utilities that break Tailwind 3 (`var(--spacing(...))`). Use `safelist` in `tailwind.config.ts` for classes only emitted by json-render shadcn at runtime.
 
+### SSE MCP tool wrapping (`lib/mcp/ai-sdk-mcp-tools.ts`)
+
+- `wrapMcpToolForBedrock` must keep the `inputSchema` from `@ai-sdk/mcp` `client.tools()` (MCP JSON Schema with required fields). Replacing it with a loose Zod preprocess that defaulted to `{}` let empty tool calls reach the server (e.g. missing `query` on `execute_query`).
+
 ### MCP env merge (`lib/mcp/merge-server-mcp-env.ts`)
 
 - `MCP_SSE_URL` / `MCP_X_API_KEY` apply only when the agent omits `url` or `x-api-key`.
 - DB headers (`x-db-url`, `x-db-host`, `x-db-user`, `x-db-pass`, `x-db-name`) are **passed through** by default so remote MCP servers receive credentials on tool calls.
 - Set `MCP_STRIP_DB_HEADERS=true` only when DB is configured solely on the MCP container and headers must not be forwarded from the agent payload.
+
+### AI Elements task + shimmer UI (`components/message.tsx`, `components/multimodal-input.tsx`)
+
+- AI Elements are installed under `components/ai-elements/`; local compatibility re-exports are kept in `components/elements/{shimmer,attachments,task}.tsx` so app imports stay under `@/components/elements/*`.
+- Composer and message attachment rows now use the AI Elements `Attachments` container while preserving existing `PreviewAttachment` behavior and test IDs (`attachments-preview`, `message-attachments`).
+- Assistant loading state (`ThinkingMessage`) uses `Shimmer` instead of static text.
+- A new tool `updateAgentTasks` (`lib/ai/tools/update-agent-tasks.ts`) is registered in chat route + `ChatTools` typing and rendered as AI Elements `Task` blocks in message parts (`tool-updateAgentTasks`), with prompt guidance in `lib/ai/prompts.ts`.
+
+### Chain-of-thought + reasoning wiring
+
+- Chat API (`app/(chat)/api/chat/route.ts`): for `chat-model-reasoning`, `providerOptions.openaiCompatible.reasoningEffort` is `high` without MCP tools and `medium` when agent MCP tools are present (high + tools was omitting output on some gateways).
+- `components/elements/reasoning.tsx` now re-exports the AI Elements reasoning primitives from `components/ai-elements/reasoning.tsx` (instead of a separate local implementation), so `MessageReasoning` renders with the new component behavior.
+- `components/elements/chain-of-thought.tsx` re-exports `components/ai-elements/chain-of-thought.tsx`, and `tool-updateAgentTasks` in `components/message.tsx` now renders as `ChainOfThought` + `ChainOfThoughtStep` timeline UI.
+- Reasoning chat mode guidance in `lib/ai/prompts.ts` now explicitly asks the model to emit `<think>...</think>` sections for `chat-model-reasoning`, which is parsed by `extractReasoningMiddleware({ tagName: 'think' })` and streamed via `sendReasoning: true` in the chat API route.

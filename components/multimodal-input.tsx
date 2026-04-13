@@ -37,6 +37,7 @@ import {
   PromptInputToolbar,
   PromptInputTools,
 } from './elements/prompt-input';
+import { Attachments } from './elements/attachments';
 
 function PureMultimodalInput({
   chatId,
@@ -290,9 +291,10 @@ function PureMultimodalInput({
         }}
       >
         {(attachments.length > 0 || uploadQueue.length > 0) && (
-          <div
+          <Attachments
             data-testid="attachments-preview"
-            className="flex overflow-x-auto flex-row gap-2 items-end px-3 py-2"
+            className="overflow-x-auto px-3 py-2"
+            variant="grid"
           >
             {attachments.map((attachment) => (
               <PreviewAttachment
@@ -320,7 +322,7 @@ function PureMultimodalInput({
                 isUploading={true}
               />
             ))}
-          </div>
+          </Attachments>
         )}
 
         <PromptInputTextarea

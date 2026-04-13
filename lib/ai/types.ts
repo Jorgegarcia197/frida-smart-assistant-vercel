@@ -4,6 +4,7 @@ import type {
   createMermaidDiagram,
   getWeather,
   requestSuggestions,
+  updateAgentTasks,
   updateDocument,
 } from './tools';
 
@@ -16,6 +17,7 @@ type requestSuggestionsTool = InferUITool<
 type createMermaidDiagramTool = InferUITool<
   ReturnType<typeof createMermaidDiagram>
 >;
+type updateAgentTasksTool = InferUITool<typeof updateAgentTasks>;
 
 export type ChatTools = {
   getWeather: weatherTool;
@@ -23,4 +25,5 @@ export type ChatTools = {
   updateDocument: updateDocumentTool;
   requestSuggestions: requestSuggestionsTool;
   createMermaidDiagram: createMermaidDiagramTool;
+  updateAgentTasks: updateAgentTasksTool;
 };

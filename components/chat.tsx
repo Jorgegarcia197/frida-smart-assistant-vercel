@@ -19,10 +19,14 @@ import { useSearchParams } from 'next/navigation';
 import { useChatVisibility } from '@/hooks/use-chat-visibility';
 import { useAutoResume } from '@/hooks/use-auto-resume';
 import { ChatSDKError } from '@/lib/errors';
-import type { Attachment, ChatMessage } from '@/lib/types';
+import type { Attachment, ChatMessage, CustomUIDataTypes } from '@/lib/types';
 import { useDataStream } from './data-stream-provider';
-import { DefaultChatTransport } from 'ai';
+import { DefaultChatTransport, type DataUIPart } from 'ai';
 import { useAgentForChat } from './agent-provider';
+
+function isSpecDataPart(part: { type: string }): part is DataUIPart<CustomUIDataTypes> {
+  return part.type === 'data-spec';
+}
 
 /** Match server + ModelSelector; avoids stale `initialChatModel` after client-side model change. */
 function readChatModelCookie(fallback: string): string {
@@ -139,7 +143,9 @@ export function Chat({
       },
     }),
     onData: (dataPart) => {
-      setDataStream((ds) => (ds ? [...ds, dataPart] : []));
+      if (isSpecDataPart(dataPart)) {
+        setDataStream((ds) => (ds ? [...ds, dataPart] : []));
+      }
     },
     onFinish: () => {
       mutate(unstable_serialize(getChatHistoryPaginationKey));

@@ -2,42 +2,49 @@
  * MCP tools via @ai-sdk/mcp (see https://ai-sdk.dev/docs/ai-sdk-core/mcp-tools).
  * SSE servers use createMCPClient + transport { type: 'sse', url, headers, redirect: 'error' }.
  *
- * Raw MCP tools use jsonSchema with additionalProperties:false; Bedrock Converse requires
- * toolUse.input to be a JSON object — we wrap with dynamicTool + Zod object passthrough.
+ * `createMCPClient().tools()` already builds each tool with the MCP `inputSchema` (required
+ * fields, additionalProperties: false). We only re-wrap to sanitize the tool *name* for Bedrock;
+ * we must keep that schema — a previous loose `z.preprocess(..., {})` let empty `{}` calls through,
+ * which broke servers that require arguments (e.g. `query` on `execute_query`).
  */
 import { createMCPClient, type MCPClient } from '@ai-sdk/mcp';
+import type { FlexibleSchema } from '@ai-sdk/provider-utils';
 import { dynamicTool } from 'ai';
 import { z } from 'zod/v3';
 
-type McpToolLike = {
+type McpSourceTool = {
   description?: string;
+  title?: string;
+  inputSchema?: FlexibleSchema<unknown>;
   execute?: (args: unknown, options: unknown) => Promise<unknown>;
+  toModelOutput?: (options: {
+    toolCallId: string;
+    input: unknown;
+    output: unknown;
+  }) => unknown;
 };
 
 function wrapMcpToolForBedrock(
   bedrockName: string,
   sourceTool: unknown,
 ) {
-  const t = sourceTool as McpToolLike;
+  const t = sourceTool as McpSourceTool;
   const executeInner = t.execute;
   if (!executeInner) {
     throw new Error(`MCP tool ${bedrockName} has no execute`);
   }
   const bound = executeInner.bind(sourceTool);
 
+  if (!t.inputSchema) {
+    console.warn(
+      `[AI SDK MCP] Tool "${bedrockName}" has no inputSchema; using loose record (prefer fixing MCP server schema).`,
+    );
+  }
+
   return dynamicTool({
     description: t.description ?? `MCP tool ${bedrockName}`,
-    // Bedrock Converse requires toolUse.input to be a JSON object (not array/string/null)
-    inputSchema: z.preprocess(
-      (val) =>
-        val !== null &&
-        val !== undefined &&
-        typeof val === 'object' &&
-        !Array.isArray(val)
-          ? val
-          : {},
-      z.record(z.string(), z.unknown()),
-    ),
+    ...(t.title ? { title: t.title } : {}),
+    inputSchema: t.inputSchema ?? z.record(z.string(), z.unknown()),
     execute: async (args: unknown) => {
       const input =
         args !== null &&
@@ -51,6 +58,9 @@ function wrapMcpToolForBedrock(
         messages: [],
       });
     },
+    ...(t.toModelOutput
+      ? { toModelOutput: t.toModelOutput.bind(sourceTool) }
+      : {}),
   });
 }
 

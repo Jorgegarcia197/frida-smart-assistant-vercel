@@ -27,6 +27,7 @@ import { updateDocument } from '@/lib/ai/tools/update-document';
 import { requestSuggestions } from '@/lib/ai/tools/request-suggestions';
 import { getWeather } from '@/lib/ai/tools/get-weather';
 import { createMermaidDiagram } from '@/lib/ai/tools/create-mermaid-diagram';
+import { updateAgentTasks } from '@/lib/ai/tools/update-agent-tasks';
 import { expandPdfFilePartsForModel } from '@/lib/ai/expand-pdf-parts-for-model';
 import { myProvider } from '@/lib/ai/providers';
 import { getMcpClientInstance } from '@/lib/mcp/mcp-singleton-instance';
@@ -53,6 +54,7 @@ import { ChatSDKError } from '@/lib/errors';
 import type { ChatMessage } from '@/lib/types';
 
 export const maxDuration = 60;
+const DEBUG_OPENAI_COMPATIBLE = process.env.DEBUG_OPENAI_COMPATIBLE === 'true';
 
 let globalStreamContext: ResumableStreamContext | null = null;
 
@@ -520,7 +522,7 @@ export async function POST(request: Request) {
       );
 
     const stream = createUIMessageStream({
-      execute: ({ writer: dataStream }) => {
+      execute: async ({ writer: dataStream }) => {
         const systemPromptText = systemPrompt({
           selectedChatModel,
           requestHints,
@@ -534,6 +536,20 @@ export async function POST(request: Request) {
 
         const hasMcpToolsForRequest = mcpActiveTools.length > 0;
 
+        const reasoningProviderOptions =
+          selectedChatModel === 'chat-model-reasoning'
+            ? {
+                // OpenAI-compatible provider options must be sent under provider name.
+                openaiCompatible: {
+                  user: session.user.id,
+                  // High reasoning + tools has caused empty streams on some gateways; medium is the compromise for MCP-heavy turns.
+                  reasoningEffort: hasMcpToolsForRequest
+                    ? ('medium' as const)
+                    : ('high' as const),
+                },
+              }
+            : undefined;
+
         // Same ToolSet as `streamText` so `convertToModelMessages` can serialize
         // prior turns' tool outputs (especially dynamic MCP tools) for Bedrock/core.
         const toolsForModel = {
@@ -545,15 +561,40 @@ export async function POST(request: Request) {
             dataStream,
           }),
           createMermaidDiagram: createMermaidDiagram({ session, dataStream }),
+          updateAgentTasks,
           ...mcpTools,
         };
+
+        if (DEBUG_OPENAI_COMPATIBLE) {
+          const latestMessage = uiMessagesForModel.at(-1);
+          console.log(
+            '🔍 [compatible-api] outgoing request',
+            JSON.stringify(
+              {
+                selectedChatModel,
+                providerOptions: reasoningProviderOptions,
+                toolCount: Object.keys(toolsForModel).length,
+                latestMessage: latestMessage
+                  ? {
+                      id: latestMessage.id,
+                      role: latestMessage.role,
+                      partTypes: latestMessage.parts.map((part) => part.type),
+                    }
+                  : null,
+              },
+              null,
+              2,
+            ),
+          );
+        }
 
         const result = streamText({
           model: myProvider.languageModel(selectedChatModel),
           system: systemPromptText,
-          messages: convertToModelMessages(uiMessagesForModel, {
+          messages: await convertToModelMessages(uiMessagesForModel, {
             tools: toolsForModel,
           }),
+          providerOptions: reasoningProviderOptions,
           // Word-level smoothing (matches text artifacts). pipeJsonRender buffers JSONL
           // lines until a newline, so inline generative-ui patches stay valid.
           experimental_transform: smoothStream({ chunking: 'word' }),
@@ -575,6 +616,7 @@ export async function POST(request: Request) {
                   'updateDocument',
                   'requestSuggestions',
                   'createMermaidDiagram',
+                  'updateAgentTasks',
                   ...mcpActiveTools,
                 ] as any),
           tools: toolsForModel,
@@ -592,6 +634,46 @@ export async function POST(request: Request) {
       },
       generateId: generateUUID,
       onFinish: async ({ messages }) => {
+        if (DEBUG_OPENAI_COMPATIBLE) {
+          const assistantMessage = [...messages]
+            .reverse()
+            .find((message) => message.role === 'assistant');
+          const reasoningParts = assistantMessage
+            ? assistantMessage.parts.filter((part) => part.type === 'reasoning')
+            : [];
+          const textParts = assistantMessage
+            ? assistantMessage.parts.filter((part) => part.type === 'text')
+            : [];
+
+          console.log(
+            '🔍 [compatible-api] incoming response summary',
+            JSON.stringify(
+              {
+                assistantMessageId: assistantMessage?.id ?? null,
+                assistantPartTypes:
+                  assistantMessage?.parts.map((part) => part.type) ?? [],
+                reasoningPartsCount: reasoningParts.length,
+                reasoningPreview: reasoningParts
+                  .map((part) =>
+                    'text' in part && typeof part.text === 'string'
+                      ? part.text.slice(0, 300)
+                      : '',
+                  )
+                  .filter(Boolean),
+                textPreview: textParts
+                  .map((part) =>
+                    'text' in part && typeof part.text === 'string'
+                      ? part.text.slice(0, 300)
+                      : '',
+                  )
+                  .filter(Boolean),
+              },
+              null,
+              2,
+            ),
+          );
+        }
+
         await saveMessages({
           messages: messages.map((message) => ({
             id: message.id,

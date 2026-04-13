@@ -106,17 +106,30 @@ export const systemPrompt = ({
   console.log('🔧 Responsibilities Section:', responsibilitiesSection);
   console.log('🔧 Knowledge Base Section:', knowledgeBaseSection);
 
+  const mcpHasSqlTool =
+    mcpToolNames?.some((n) =>
+      /execute_query|run_query|query_sql|sql_query/i.test(n),
+    ) ?? false;
+
+  const mcpSqlHints = mcpHasSqlTool
+    ? `\n\nMCP SQL / database tools:
+- Every tool call MUST satisfy the tool schema: include every required property with real values (e.g. a non-empty SQL string in \`query\`). Never call SQL execution tools with an empty argument object.
+- Use valid SQL: \`CASE\` expressions need \`THEN\` (and usually \`ELSE\`). Example counts: \`COUNT(CASE WHEN condition THEN 1 END)\` or \`SUM(CASE WHEN condition THEN 1 ELSE 0 END)\`. Invalid: \`CASE WHEN col = 1 END\` with no \`THEN\`.`
+    : '';
+
   const mcpToolsSection =
     mcpToolNames && mcpToolNames.length > 0
-      ? `\n\nConnected MCP tools — you MUST call them for any question that needs live data, database queries, inventory, customers, revenue, products, or schemas. Do not say you lack access; use the tools first, then answer from the results.\nWhen the user asks to chart or visualize data from an earlier turn, reuse the tool results already in this conversation or call the tools again if the numbers are missing.\n${mcpToolNames.map((n) => `- \`${n}\``).join('\n')}`
+      ? `\n\nConnected MCP tools — you MUST call them for any question that needs live data, database queries, inventory, customers, revenue, products, or schemas. Do not say you lack access; use the tools first, then answer from the results.\nWhen the user asks to chart or visualize data from an earlier turn, reuse the tool results already in this conversation or call the tools again if the numbers are missing.\n${mcpToolNames.map((n) => `- \`${n}\``).join('\n')}${mcpSqlHints}`
       : '';
+
+  const tasksSection = `\n\nTask Progress UI:\nFor multi-step work, call \`updateAgentTasks\` with a short title and ordered task items using statuses: pending, in_progress, completed, or failed. Keep the checklist concise and update it when progress changes.`;
 
   const genUiSection = `\n\n${generativeUiPromptSection}`;
 
   if (selectedChatModel === 'chat-model-reasoning') {
-    return `${basePrompt}${responsibilitiesSection}${knowledgeBaseSection}${mcpToolsSection}${genUiSection}\n\n${requestPrompt}`;
+    return `${basePrompt}${responsibilitiesSection}${knowledgeBaseSection}${mcpToolsSection}${tasksSection}${genUiSection}\n\n${requestPrompt}`;
   } else {
-    return `${basePrompt}${responsibilitiesSection}${knowledgeBaseSection}${mcpToolsSection}${genUiSection}\n\n${requestPrompt}\n\n${artifactsPrompt}`;
+    return `${basePrompt}${responsibilitiesSection}${knowledgeBaseSection}${mcpToolsSection}${tasksSection}${genUiSection}\n\n${requestPrompt}\n\n${artifactsPrompt}`;
   }
 };
 

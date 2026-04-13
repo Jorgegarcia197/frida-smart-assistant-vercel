@@ -19,6 +19,7 @@ import { MessageReasoning } from './message-reasoning';
 import type { UseChatHelpers } from '@ai-sdk/react';
 import { McpToolCard } from './mcp-tool-card';
 import type { ChatMessage } from '@/lib/types';
+import { Attachments } from './elements/attachments';
 import {
   Tool,
   ToolContent,
@@ -28,6 +29,13 @@ import {
 } from './elements/tool';
 import { MessageContent } from './elements/message';
 import { Response } from './elements/response';
+import { Shimmer } from './elements/shimmer';
+import {
+  ChainOfThought,
+  ChainOfThoughtContent,
+  ChainOfThoughtHeader,
+  ChainOfThoughtStep,
+} from './elements/chain-of-thought';
 import { useDataStream } from './data-stream-provider';
 import { AssistantMessageContent } from '@/components/json-render/assistant-message-content';
 
@@ -44,6 +52,89 @@ function splitMcpToolDisplayName(fullName: string): {
     };
   }
   return { serverName: 'MCP', shortToolName: fullName };
+}
+
+type AgentTaskStatus = 'pending' | 'in_progress' | 'completed' | 'failed';
+
+type AgentTaskItem = {
+  id: string;
+  title: string;
+  status: AgentTaskStatus;
+};
+
+function normalizeAgentTaskItems(value: unknown): AgentTaskItem[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value
+    .map((item, index) => {
+      if (!item || typeof item !== 'object') {
+        return null;
+      }
+
+      const title =
+        'title' in item && typeof item.title === 'string' ? item.title.trim() : '';
+      const status = 'status' in item ? item.status : undefined;
+
+      if (
+        !title ||
+        (status !== 'pending' &&
+          status !== 'in_progress' &&
+          status !== 'completed' &&
+          status !== 'failed')
+      ) {
+        return null;
+      }
+
+      const id =
+        'id' in item && typeof item.id === 'string' && item.id.trim().length > 0
+          ? item.id.trim()
+          : `task-${index + 1}`;
+
+      return { id, title, status };
+    })
+    .filter((item): item is AgentTaskItem => item !== null);
+}
+
+function getTaskTitleFromValue(value: unknown): string {
+  if (!value || typeof value !== 'object') {
+    return 'Working plan';
+  }
+
+  const candidate = 'title' in value ? value.title : undefined;
+  return typeof candidate === 'string' && candidate.trim().length > 0
+    ? candidate.trim()
+    : 'Working plan';
+}
+
+function getTaskStatusLabel(status: AgentTaskStatus): string {
+  switch (status) {
+    case 'completed':
+      return 'Completed';
+    case 'in_progress':
+      return 'In progress';
+    case 'failed':
+      return 'Failed';
+    case 'pending':
+    default:
+      return 'Pending';
+  }
+}
+
+function toChainOfThoughtStatus(
+  status: AgentTaskStatus,
+): 'active' | 'complete' | 'pending' {
+  switch (status) {
+    case 'completed':
+      return 'complete';
+    case 'in_progress':
+    case 'failed':
+      return 'active';
+    case 'pending':
+    default:
+      return 'pending';
+  }
 }
 
 const PurePreviewMessage = ({
@@ -118,9 +209,10 @@ const PurePreviewMessage = ({
             })}
           >
             {attachmentsFromMessage.length > 0 && (
-              <div
+              <Attachments
                 data-testid={`message-attachments`}
-                className="flex flex-row gap-2 justify-end"
+                className="justify-end"
+                variant="grid"
               >
                 {attachmentsFromMessage.map((attachment) => (
                   <PreviewAttachment
@@ -132,7 +224,7 @@ const PurePreviewMessage = ({
                     }}
                   />
                 ))}
-              </div>
+              </Attachments>
             )}
 
             {message.parts?.map((part, index) => {
@@ -353,6 +445,40 @@ const PurePreviewMessage = ({
                 );
               }
 
+              if (type === 'tool-updateAgentTasks') {
+                const { toolCallId, state } = part;
+                const sourceValue =
+                  state === 'output-available' ? part.output : part.input;
+                const taskTitle = getTaskTitleFromValue(sourceValue);
+                const taskItems =
+                  sourceValue && typeof sourceValue === 'object' && 'items' in sourceValue
+                    ? normalizeAgentTaskItems(sourceValue.items)
+                    : [];
+
+                return (
+                  <ChainOfThought key={toolCallId} className="w-full" defaultOpen={true}>
+                    <ChainOfThoughtHeader>{taskTitle}</ChainOfThoughtHeader>
+                    <ChainOfThoughtContent>
+                      {taskItems.length > 0 ? (
+                        taskItems.map((item) => (
+                          <ChainOfThoughtStep
+                            key={item.id}
+                            description={getTaskStatusLabel(item.status)}
+                            label={item.title}
+                            status={toChainOfThoughtStatus(item.status)}
+                          />
+                        ))
+                      ) : (
+                        <ChainOfThoughtStep
+                          label="Preparing task list..."
+                          status="active"
+                        />
+                      )}
+                    </ChainOfThoughtContent>
+                  </ChainOfThought>
+                );
+              }
+
               // MCP / dynamic tools (incl. @ai-sdk/mcp): part.toolName, not literal `type`
               if (type === 'dynamic-tool') {
                 const { state, toolCallId } = part;
@@ -459,7 +585,7 @@ export const ThinkingMessage = () => {
 
         <div className="flex flex-col gap-2 w-full">
           <div className="flex flex-col gap-4 text-muted-foreground">
-            Thinking ...
+            <Shimmer className="text-muted-foreground">Thinking ...</Shimmer>
           </div>
         </div>
       </div>

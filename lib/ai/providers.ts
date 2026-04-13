@@ -19,6 +19,23 @@ interface OpenAICompatibleConfig {
   embeddingModel: string;
 }
 
+const DEBUG_OPENAI_COMPATIBLE = process.env.DEBUG_OPENAI_COMPATIBLE === 'true';
+const MAX_DEBUG_BODY_CHARS = 4000;
+
+function truncateForLog(value: string): string {
+  return value.length > MAX_DEBUG_BODY_CHARS
+    ? `${value.slice(0, MAX_DEBUG_BODY_CHARS)}... [truncated]`
+    : value;
+}
+
+function parseMaybeJson(value: string): unknown {
+  try {
+    return JSON.parse(value);
+  } catch {
+    return value;
+  }
+}
+
 function getOpenAICompatibleConfig(): OpenAICompatibleConfig {
   const apiKey =
     process.env.LLMOPS_API_KEY ??
@@ -55,6 +72,86 @@ function getOpenAICompatibleInstance() {
         Authorization: `Bearer ${config.apiKey}`,
       },
       supportsStructuredOutputs: true,
+      transformRequestBody: (body) => {
+        if (DEBUG_OPENAI_COMPATIBLE) {
+          try {
+            const serialized = JSON.stringify(body);
+            console.log(
+              '🔍 [openai-compatible] transformed request body',
+              parseMaybeJson(truncateForLog(serialized)),
+            );
+          } catch (error) {
+            console.warn(
+              '⚠️ [openai-compatible] failed to serialize transformed request body',
+              error,
+            );
+          }
+        }
+        return body;
+      },
+      fetch: async (input, init) => {
+        const url = typeof input === 'string' ? input : input.toString();
+        const method =
+          init?.method ??
+          (typeof input !== 'string' && input instanceof Request
+            ? input.method
+            : 'GET');
+
+        if (DEBUG_OPENAI_COMPATIBLE) {
+          let bodyPreview: unknown = null;
+          const body =
+            typeof init?.body === 'string'
+              ? init.body
+              : init?.body
+                ? '[non-string body]'
+                : null;
+
+          if (typeof body === 'string') {
+            bodyPreview = parseMaybeJson(truncateForLog(body));
+          } else {
+            bodyPreview = body;
+          }
+
+          console.log('🔍 [openai-compatible] outgoing HTTP request', {
+            method,
+            url,
+            body: bodyPreview,
+          });
+        }
+
+        const response = await fetch(input, init);
+
+        if (DEBUG_OPENAI_COMPATIBLE) {
+          const contentType = response.headers.get('content-type') ?? '';
+          const logBase = {
+            method,
+            url,
+            status: response.status,
+            statusText: response.statusText,
+            contentType,
+          };
+
+          if (contentType.includes('application/json')) {
+            try {
+              const responseText = await response.clone().text();
+              console.log('🔍 [openai-compatible] HTTP response', {
+                ...logBase,
+                body: parseMaybeJson(truncateForLog(responseText)),
+              });
+            } catch (error) {
+              console.warn(
+                '⚠️ [openai-compatible] failed to read JSON response body for logging',
+                error,
+              );
+              console.log('🔍 [openai-compatible] HTTP response', logBase);
+            }
+          } else {
+            console.log('🔍 [openai-compatible] HTTP response', logBase);
+          }
+        }
+
+        return response;
+      },
     });
   }
 

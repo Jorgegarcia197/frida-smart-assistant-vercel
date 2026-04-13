@@ -50,14 +50,14 @@ const LoadAgentContent = ({
       );
 
       if (selectedAgent) {
-        console.log(
-          '[Load Agent] Full agent payload (from list / API mapping):',
-          JSON.stringify(selectedAgent, null, 2),
-        );
-        console.log(
-          '[Load Agent] MCP config (mcps):',
-          JSON.stringify(selectedAgent.mcps ?? null, null, 2),
-        );
+        // console.log(
+        //   '[Load Agent] Full agent payload (from list / API mapping):',
+        //   JSON.stringify(selectedAgent, null, 2),
+        // );
+        // console.log(
+        //   '[Load Agent] MCP config (mcps):',
+        //   JSON.stringify(selectedAgent.mcps ?? null, null, 2),
+        // );
 
         // Set the agent in the context
         setCurrentAgent(selectedAgent);
