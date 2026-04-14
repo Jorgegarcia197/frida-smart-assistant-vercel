@@ -16,12 +16,13 @@ interface CreateDocumentProps {
 export const createDocument = ({ session, dataStream }: CreateDocumentProps) =>
   tool({
     description:
-      'Create a document for a writing or content creation activities. This tool will call other functions that will generate the contents of the document based on the title and kind.',
+      'Create a document for writing or content tasks. Use a concise `title` for display and optional `prompt` for full generation instructions/facts. If `prompt` is omitted, generation falls back to `title`. Kinds: text (Markdown reports/summaries), code (Python), sheet (CSV), mermaid (diagrams).',
     inputSchema: z.object({
       title: z.string(),
+      prompt: z.string().optional(),
       kind: z.enum(artifactKinds),
     }),
-    execute: async ({ title, kind }) => {
+    execute: async ({ title, prompt, kind }) => {
       const id = generateUUID();
 
       dataStream.write({
@@ -59,7 +60,8 @@ export const createDocument = ({ session, dataStream }: CreateDocumentProps) =>
 
       await documentHandler.onCreateDocument({
         id,
-        title,
+        title: prompt ?? title,
+        displayTitle: title,
         dataStream,
         session,
       });

@@ -5,7 +5,6 @@ import {
   convertToModelMessages,
   JsonToSseTransformStream,
   dynamicTool,
-  smoothStream,
 } from 'ai';
 import { pipeJsonRender } from '@json-render/core';
 import { auth } from '@/app/(auth)/auth';
@@ -26,8 +25,10 @@ import { createDocument } from '@/lib/ai/tools/create-document';
 import { updateDocument } from '@/lib/ai/tools/update-document';
 import { requestSuggestions } from '@/lib/ai/tools/request-suggestions';
 import { getWeather } from '@/lib/ai/tools/get-weather';
+import { createIshikawaDiagram } from '@/lib/ai/tools/create-ishikawa-diagram';
 import { createMermaidDiagram } from '@/lib/ai/tools/create-mermaid-diagram';
 import { updateAgentTasks } from '@/lib/ai/tools/update-agent-tasks';
+import { renderHostMap } from '@/lib/ai/tools/render-host-map';
 import { expandPdfFilePartsForModel } from '@/lib/ai/expand-pdf-parts-for-model';
 import { myProvider } from '@/lib/ai/providers';
 import { getMcpClientInstance } from '@/lib/mcp/mcp-singleton-instance';
@@ -40,6 +41,10 @@ import {
   collectAiSdkSseMcpTools,
   filterToNonSseMcpServers,
 } from '@/lib/mcp/ai-sdk-mcp-tools';
+import {
+  buildAgentCustomApiTools,
+  redactAgentToolsForLog,
+} from '@/lib/ai/tools/agent-custom-api-tools';
 import { z } from 'zod/v3';
 import { postRequestBodySchema, type PostRequestBody } from './schema';
 import { geolocation } from '@vercel/functions';
@@ -160,6 +165,7 @@ async function getMcpToolsForAI(
   userId: string,
   agentMcpConfig?: any,
   agentKnowledgeBaseIds?: string[],
+  agentToolsConfig?: unknown,
 ): Promise<{
   mcpTools: Record<string, any>;
   mcpActiveTools: string[];
@@ -181,6 +187,10 @@ async function getMcpToolsForAI(
       redactMcpConfigForLog(resolvedAgentMcp),
     );
     console.log('🔧 Agent knowledge base IDs:', agentKnowledgeBaseIds);
+    console.log(
+      '🔧 Agent custom API tools (redacted):',
+      redactAgentToolsForLog(agentToolsConfig),
+    );
 
     const mcpServersResolved = resolvedAgentMcp?.mcpServers as
       | Record<string, unknown>
@@ -334,6 +344,14 @@ async function getMcpToolsForAI(
       }
     }
 
+    const customApi = buildAgentCustomApiTools(
+      agentToolsConfig,
+      sanitizeBedrockToolName,
+      bedrockToolNames,
+    );
+    Object.assign(mcpTools, customApi.tools);
+    mcpActiveTools.push(...customApi.activeNames);
+
     // Add knowledge base search tool if agent has knowledge base IDs
     if (agentKnowledgeBaseIds && agentKnowledgeBaseIds.length > 0) {
       console.log('🔧 Adding knowledge base search tool for agent');
@@ -367,18 +385,20 @@ export async function POST(request: Request) {
 
   try {
     const json = await request.json();
-    const logSafe =
-      json &&
-      typeof json === 'object' &&
-      'agentMcpConfig' in json &&
-      (json as { agentMcpConfig?: unknown }).agentMcpConfig !== undefined
-        ? {
-            ...json,
-            agentMcpConfig: redactMcpConfigForLog(
-              (json as { agentMcpConfig: unknown }).agentMcpConfig,
-            ),
-          }
-        : json;
+    const j = json && typeof json === 'object' ? (json as Record<string, unknown>) : null;
+    const logSafe = j
+      ? {
+          ...j,
+          ...(j.agentMcpConfig !== undefined
+            ? {
+                agentMcpConfig: redactMcpConfigForLog(j.agentMcpConfig),
+              }
+            : {}),
+          ...(j.agentTools !== undefined
+            ? { agentTools: redactAgentToolsForLog(j.agentTools) }
+            : {}),
+        }
+      : json;
     console.log('🔧 Raw JSON received:', JSON.stringify(logSafe, null, 2));
     requestBody = postRequestBodySchema.parse(json);
   } catch (error) {
@@ -405,10 +425,13 @@ export async function POST(request: Request) {
       agentResponsibilities,
       agentMcpConfig,
       agentKnowledgeBaseIds,
+      agentTools,
     } = requestBody;
     console.log('🔧 Request Body received (redacted MCP):', {
       ...requestBody,
       agentMcpConfig: redactMcpConfigForLog(agentMcpConfig),
+      agentTools:
+        agentTools !== undefined ? redactAgentToolsForLog(agentTools) : undefined,
     });
 
     console.log('🔧 Agent System Prompt received:', agentSystemPrompt);
@@ -418,6 +441,10 @@ export async function POST(request: Request) {
       redactMcpConfigForLog(agentMcpConfig),
     );
     console.log('🔧 Agent Knowledge Base IDs received:', agentKnowledgeBaseIds);
+    console.log(
+      '🔧 Agent tools received (redacted):',
+      agentTools !== undefined ? redactAgentToolsForLog(agentTools) : undefined,
+    );
 
     const session = await auth();
     if (!session?.user) {
@@ -441,12 +468,14 @@ export async function POST(request: Request) {
         agentSystemPrompt,
         agentResponsibilities,
         agentMcpConfig,
+        agentTools,
         agentKnowledgeBaseIds,
       });
       console.log('✅ New chat saved with agent data:', {
         agentSystemPrompt,
         agentResponsibilities,
         hasAgentMcp: !!agentMcpConfig,
+        hasAgentTools: !!agentTools,
       });
     } else {
       console.log('📂 Using existing chat');
@@ -457,6 +486,7 @@ export async function POST(request: Request) {
       // Persist agent/MCP when the client sends it (reload still works via merge below)
       if (
         agentMcpConfig !== undefined ||
+        agentTools !== undefined ||
         agentKnowledgeBaseIds !== undefined ||
         agentSystemPrompt !== undefined ||
         agentResponsibilities !== undefined
@@ -464,6 +494,7 @@ export async function POST(request: Request) {
         await mergeChatAgentFields({
           id,
           ...(agentMcpConfig !== undefined ? { agentMcpConfig } : {}),
+          ...(agentTools !== undefined ? { agentTools } : {}),
           ...(agentKnowledgeBaseIds !== undefined
             ? { agentKnowledgeBaseIds }
             : {}),
@@ -482,6 +513,7 @@ export async function POST(request: Request) {
       agentSystemPrompt ?? chat?.agentSystemPrompt;
     const effectiveAgentResponsibilities =
       agentResponsibilities ?? chat?.agentResponsibilities;
+    const effectiveAgentTools = agentTools ?? chat?.agentTools;
 
     const messagesFromDb = await getMessagesByChatId({ id });
     const uiMessages = [...convertToUIMessages(messagesFromDb), message];
@@ -513,12 +545,13 @@ export async function POST(request: Request) {
     const streamId = generateUUID();
     await createStreamId({ streamId, chatId: id });
 
-    // Get MCP tools for this user (with agent MCP config and knowledge base IDs if provided)
+    // Get MCP tools + Agent Builder HTTP tools for this user
     const { mcpTools, mcpActiveTools, closeAiSdkMcpClients } =
       await getMcpToolsForAI(
         session.user.id,
         effectiveAgentMcpConfig,
         effectiveAgentKnowledgeBaseIds,
+        effectiveAgentTools,
       );
 
     const stream = createUIMessageStream({
@@ -542,10 +575,10 @@ export async function POST(request: Request) {
                 // OpenAI-compatible provider options must be sent under provider name.
                 openaiCompatible: {
                   user: session.user.id,
-                  // High reasoning + tools has caused empty streams on some gateways; medium is the compromise for MCP-heavy turns.
-                  reasoningEffort: hasMcpToolsForRequest
-                    ? ('medium' as const)
-                    : ('high' as const),
+                  // High reasoning + tools has caused empty streams on some gateways. We always register
+                  // built-in tools (createDocument, createMermaidDiagram, etc.); medium keeps tool calls
+                  // reliable. High effort without MCP was skewing toward prose-only answers after "thinking".
+                  reasoningEffort: 'medium' as const,
                 },
               }
             : undefined;
@@ -560,8 +593,10 @@ export async function POST(request: Request) {
             session,
             dataStream,
           }),
+          createIshikawaDiagram: createIshikawaDiagram({ session, dataStream }),
           createMermaidDiagram: createMermaidDiagram({ session, dataStream }),
           updateAgentTasks,
+          renderHostMap,
           ...mcpTools,
         };
 
@@ -595,30 +630,30 @@ export async function POST(request: Request) {
             tools: toolsForModel,
           }),
           providerOptions: reasoningProviderOptions,
-          // Word-level smoothing (matches text artifacts). pipeJsonRender buffers JSONL
-          // lines until a newline, so inline generative-ui patches stay valid.
-          experimental_transform: smoothStream({ chunking: 'word' }),
+          // Keep raw provider chunk boundaries so json-render SpecStream (JSONL patches)
+          // can flush progressively without word-level buffering/rechunking.
           // Tool call + optional follow-up text needs more than one step
           stopWhen: stepCountIs(hasMcpToolsForRequest ? 12 : 5),
-          toolChoice: hasMcpToolsForRequest ? 'auto' : undefined,
+          // Explicit auto whenever tools exist (built-ins are always present); undefined matched some
+          // gateways poorly vs MCP-only turns that passed 'auto'.
+          toolChoice: 'auto',
           onFinish: async () => {
             await closeAiSdkMcpClients();
           },
 
-          // Reasoning model disables built-in chat/artifact tools, but agent MCP tools
-          // must stay active so loaded agents can use DB/external MCP servers.
-          activeTools:
-            selectedChatModel === 'chat-model-reasoning'
-              ? ([...mcpActiveTools] as any)
-              : ([
-                  'getWeather',
-                  'createDocument',
-                  'updateDocument',
-                  'requestSuggestions',
-                  'createMermaidDiagram',
-                  'updateAgentTasks',
-                  ...mcpActiveTools,
-                ] as any),
+          // Same built-in tools for all models so artifacts (createDocument / updateDocument)
+          // work when using chat-model-reasoning (default). MCP tools stay appended.
+          activeTools: [
+            'getWeather',
+            'createDocument',
+            'updateDocument',
+            'requestSuggestions',
+            'createIshikawaDiagram',
+            'createMermaidDiagram',
+            'updateAgentTasks',
+            'renderHostMap',
+            ...mcpActiveTools,
+          ] as any,
           tools: toolsForModel,
         });
 

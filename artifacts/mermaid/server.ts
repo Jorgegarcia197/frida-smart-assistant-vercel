@@ -20,6 +20,7 @@ Guidelines:
 - Include proper labels and connections
 - Ensure the diagram is visually balanced
 - Do not include markdown code blocks, just return the raw Mermaid diagram syntax
+- **sequenceDiagram:** each arrow/message must be **one line**. Put parentheses, HTTP headers, and extra detail on the **same line** as the message text after \`:\`. Never put \`(args)\` or \`Header: value\` alone on the next line — that breaks the parser.
 
 Examples of diagram types:
 - flowchart: For processes and workflows
@@ -71,6 +72,7 @@ Guidelines:
 - Make requested modifications while preserving the overall structure
 - Ensure all connections and labels remain valid
 - Do not include markdown code blocks, just return the raw Mermaid diagram syntax
+- **sequenceDiagram:** keep each \`A->>B: message\` on a single line; do not wrap message text across lines.
 
 Return the complete updated Mermaid diagram syntax.`,
       prompt: description,

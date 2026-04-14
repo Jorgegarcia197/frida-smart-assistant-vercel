@@ -30,23 +30,17 @@ function PureChatHeader({
 
   return (
     <header className="flex sticky top-0 bg-background py-3 items-center px-3 md:px-2 gap-2 border-b">
-      <div className="px-4">
+      <div className="flex shrink-0 items-center gap-2 px-4">
         <SidebarToggle />
+        {(!open || windowWidth < 768) && (
+          <Link
+            href="/"
+            className="flex items-center gap-2 text-lg font-semibold"
+          >
+            <span className="hidden md:block">FRIDA AI Assistant</span>
+          </Link>
+        )}
       </div>
-
-      {(!open || windowWidth < 768) && (
-        <>
-          {/* App Title/Branding - only when sidebar is closed */}
-          <div className="flex items-center gap-2 order-1">
-            <Link
-              href="/"
-              className="flex items-center gap-2 text-lg font-semibold"
-            >
-              <span className="hidden md:block">FRIDA AI Assistant</span>
-            </Link>
-          </div>
-        </>
-      )}
 
       {currentAgent && (
         <div

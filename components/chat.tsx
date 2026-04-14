@@ -63,6 +63,7 @@ export function Chat({
     agentSystemPrompt?: string;
     agentResponsibilities?: string[];
     agentMcpConfig?: any;
+    agentTools?: unknown;
     agentKnowledgeBaseIds?: string[];
   };
 }) {
@@ -76,6 +77,7 @@ export function Chat({
     agentSystemPrompt?: string;
     agentResponsibilities?: string[];
     agentMcpConfig?: any;
+    agentTools?: unknown;
     agentKnowledgeBaseIds?: string[];
   }>({});
   const visibilityTypeRef = useRef(initialVisibilityType);
@@ -85,6 +87,7 @@ export function Chat({
       agentSystemPrompt: currentAgent.systemPrompt,
       agentResponsibilities: currentAgent.responsibilities,
       agentMcpConfig: currentAgent.mcps,
+      agentTools: currentAgent.tools,
       agentKnowledgeBaseIds: currentAgent.knowledgeBaseIds,
     };
   } else {
@@ -125,6 +128,7 @@ export function Chat({
                   agentSystemPrompt: initialAgentData.agentSystemPrompt,
                   agentResponsibilities: initialAgentData.agentResponsibilities,
                   agentMcpConfig: initialAgentData.agentMcpConfig,
+                  agentTools: initialAgentData.agentTools,
                   agentKnowledgeBaseIds: initialAgentData.agentKnowledgeBaseIds,
                 }
               : {};

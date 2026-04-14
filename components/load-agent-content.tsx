@@ -31,10 +31,24 @@ const LoadAgentContent = ({
 
   useEffect(() => {
     if (error) {
-      console.error('Error fetching agents:', error);
+      console.error('[Load Agent] List fetch failed:', error);
       toast.error('Failed to load agents');
     }
   }, [error]);
+
+  useEffect(() => {
+    if (status !== 'authenticated' || isLoading) return;
+    if (error) return;
+    console.log(
+      '[Load Agent] Agent list ready',
+      JSON.stringify({
+        count: agents.length,
+        deployment: 'frida-assistant',
+        ids: agents.map((a) => a.id),
+        names: agents.map((a) => a.name),
+      }),
+    );
+  }, [status, isLoading, error, agents]);
 
   const handleLoadAgent = async () => {
     if (!selectedAgentId) {
@@ -50,20 +64,37 @@ const LoadAgentContent = ({
       );
 
       if (selectedAgent) {
-        // console.log(
-        //   '[Load Agent] Full agent payload (from list / API mapping):',
-        //   JSON.stringify(selectedAgent, null, 2),
-        // );
-        // console.log(
-        //   '[Load Agent] MCP config (mcps):',
-        //   JSON.stringify(selectedAgent.mcps ?? null, null, 2),
-        // );
+        const toolCount =
+          selectedAgent.tools &&
+          typeof selectedAgent.tools === 'object'
+            ? Object.keys(selectedAgent.tools as object).length
+            : 0;
+        const mcpRoot = selectedAgent.mcps as
+          | { mcpServers?: object }
+          | undefined;
+        const mcpCount = mcpRoot?.mcpServers
+          ? Object.keys(mcpRoot.mcpServers).length
+          : 0;
+        console.log(
+          '[Load Agent] Applied to chat',
+          JSON.stringify({
+            chatId,
+            agentId: selectedAgent.id,
+            name: selectedAgent.name,
+            toolCount,
+            mcpServerCount: mcpCount,
+          }),
+        );
 
-        // Set the agent in the context
         setCurrentAgent(selectedAgent);
         toast.success(`Agent "${selectedAgent.name}" loaded successfully`);
         setIsLoadAgentOpen(false);
         setSelectedAgentId('');
+      } else {
+        console.warn(
+          '[Load Agent] Selected id not in list (stale UI?)',
+          selectedAgentId,
+        );
       }
     } catch (error) {
       console.error('Error loading agent:', error);

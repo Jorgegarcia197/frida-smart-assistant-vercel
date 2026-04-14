@@ -31,6 +31,8 @@ export const postRequestBodySchema = z.object({
   agentResponsibilities: z.array(z.string()).optional(),
   agentMcpConfig: z.any().optional(), // Agent MCP configuration
   agentKnowledgeBaseIds: z.array(z.string()).optional(), // Agent knowledge base IDs
+  /** Frida Agent Builder `tools` map (e.g. type `api`) — executed server-side in chat */
+  agentTools: z.any().optional(),
 });
 
 export type PostRequestBody = z.infer<typeof postRequestBodySchema>;

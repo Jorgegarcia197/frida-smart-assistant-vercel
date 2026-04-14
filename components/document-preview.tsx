@@ -99,6 +99,9 @@ export function DocumentPreview({
 
   if (!document) return <LoadingSkeleton artifactKind={artifact.kind} />;
 
+  const displayTitle =
+    result?.title ?? args?.title ?? artifact.title ?? document.title;
+
   return (
     <div className="relative w-full cursor-pointer">
       <HitboxLayer
@@ -107,7 +110,7 @@ export function DocumentPreview({
         setArtifact={setArtifact}
       />
       <DocumentHeader
-        title={document.title}
+        title={displayTitle}
         kind={document.kind}
         isStreaming={artifact.status === 'streaming'}
       />

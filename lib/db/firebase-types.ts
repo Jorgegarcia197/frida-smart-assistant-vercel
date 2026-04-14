@@ -21,6 +21,8 @@ export interface Chat {
   agentResponsibilities?: string[];
   /** Persisted so follow-up messages still have MCP tools after reload */
   agentMcpConfig?: unknown;
+  /** Persisted HTTP/API tools from Agent Builder (same as `Agent.tools`) */
+  agentTools?: unknown;
   agentKnowledgeBaseIds?: string[];
 }
 

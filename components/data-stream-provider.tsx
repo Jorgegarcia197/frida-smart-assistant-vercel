@@ -12,6 +12,13 @@ interface DataStreamContextValue {
 }
 
 const DataStreamContext = createContext<DataStreamContextValue | null>(null);
+const NOOP_SET_DATA_STREAM: React.Dispatch<
+  React.SetStateAction<DataUIPart<CustomUIDataTypes>[]>
+> = () => {};
+const FALLBACK_DATA_STREAM_CONTEXT: DataStreamContextValue = {
+  dataStream: [],
+  setDataStream: NOOP_SET_DATA_STREAM,
+};
 
 export function DataStreamProvider({
   children,
@@ -34,7 +41,12 @@ export function DataStreamProvider({
 export function useDataStream() {
   const context = useContext(DataStreamContext);
   if (!context) {
-    throw new Error('useDataStream must be used within a DataStreamProvider');
+    if (process.env.NODE_ENV !== 'production') {
+      console.warn(
+        'useDataStream called outside DataStreamProvider; using noop fallback.',
+      );
+    }
+    return FALLBACK_DATA_STREAM_CONTEXT;
   }
   return context;
 }

@@ -86,6 +86,7 @@ export interface MermaidToolProps {
     | 'git'
     | 'pie'
     | 'mindmap'
+    | 'ishikawa'
     | 'other';
 }
 

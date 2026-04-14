@@ -20,6 +20,7 @@ export interface SaveDocumentProps {
 export interface CreateDocumentCallbackProps {
   id: string;
   title: string;
+  displayTitle?: string;
   dataStream: UIMessageStreamWriter<ChatMessage>;
   session: Session;
 }
@@ -50,7 +51,7 @@ export function createDocumentHandler<T extends ArtifactKind>(config: {
       if (args.session?.user?.id) {
         await saveDocument({
           id: args.id,
-          title: args.title,
+          title: args.displayTitle ?? args.title,
           content: '',
           kind: config.kind,
           userId: args.session.user.id,
@@ -67,7 +68,7 @@ export function createDocumentHandler<T extends ArtifactKind>(config: {
       if (args.session?.user?.id) {
         await saveDocument({
           id: args.id,
-          title: args.title,
+          title: args.displayTitle ?? args.title,
           content: draftContent,
           kind: config.kind,
           userId: args.session.user.id,

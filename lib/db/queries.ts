@@ -222,6 +222,7 @@ export async function saveChat({
   agentSystemPrompt,
   agentResponsibilities,
   agentMcpConfig,
+  agentTools,
   agentKnowledgeBaseIds,
 }: {
   id: string;
@@ -232,6 +233,7 @@ export async function saveChat({
   agentSystemPrompt?: string;
   agentResponsibilities?: string[];
   agentMcpConfig?: unknown;
+  agentTools?: unknown;
   agentKnowledgeBaseIds?: string[];
 }) {
   try {
@@ -255,6 +257,9 @@ export async function saveChat({
     if (agentMcpConfig !== undefined && agentMcpConfig !== null) {
       chatData.agentMcpConfig = agentMcpConfig;
     }
+    if (agentTools !== undefined && agentTools !== null) {
+      chatData.agentTools = agentTools;
+    }
     if (agentKnowledgeBaseIds && agentKnowledgeBaseIds.length > 0) {
       chatData.agentKnowledgeBaseIds = agentKnowledgeBaseIds;
     }
@@ -271,12 +276,14 @@ export async function mergeChatAgentFields({
   agentSystemPrompt,
   agentResponsibilities,
   agentMcpConfig,
+  agentTools,
   agentKnowledgeBaseIds,
 }: {
   id: string;
   agentSystemPrompt?: string;
   agentResponsibilities?: string[];
   agentMcpConfig?: unknown;
+  agentTools?: unknown;
   agentKnowledgeBaseIds?: string[];
 }) {
   try {
@@ -289,6 +296,9 @@ export async function mergeChatAgentFields({
     }
     if (agentMcpConfig !== undefined) {
       patch.agentMcpConfig = agentMcpConfig;
+    }
+    if (agentTools !== undefined) {
+      patch.agentTools = agentTools;
     }
     if (agentKnowledgeBaseIds !== undefined) {
       patch.agentKnowledgeBaseIds = agentKnowledgeBaseIds;

@@ -2,6 +2,7 @@ import { textblockTypeInputRule } from 'prosemirror-inputrules';
 import { Schema, type SchemaSpec } from 'prosemirror-model';
 import { schema } from 'prosemirror-schema-basic';
 import { addListNodes } from 'prosemirror-schema-list';
+import { tableNodes } from 'prosemirror-tables';
 import type { Transaction } from 'prosemirror-state';
 import type { EditorView } from 'prosemirror-view';
 import type { MutableRefObject } from 'react';
@@ -10,7 +11,13 @@ import { buildContentFromDocument } from './functions';
 
 /** Same as diffview: dedupe `prosemirror-model` types when pnpm nests a second copy. */
 export const documentSchema = new Schema({
-  nodes: addListNodes(schema.spec.nodes, 'paragraph block*', 'block'),
+  nodes: addListNodes(schema.spec.nodes, 'paragraph block*', 'block').append(
+    tableNodes({
+      tableGroup: 'block',
+      cellContent: 'block+',
+      cellAttributes: {},
+    }),
+  ),
   marks: schema.spec.marks,
 } as SchemaSpec);
 

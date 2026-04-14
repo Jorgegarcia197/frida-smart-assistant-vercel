@@ -2,7 +2,7 @@
 
 import cx from 'classnames';
 import { AnimatePresence, motion } from 'framer-motion';
-import { memo, useState } from 'react';
+import { memo, useMemo, useState } from 'react';
 import type { Vote } from '@/lib/db/firebase-types';
 import { DocumentToolResult } from './document';
 import { PencilEditIcon, SparklesIcon } from './icons';
@@ -37,7 +37,9 @@ import {
   ChainOfThoughtStep,
 } from './elements/chain-of-thought';
 import { useDataStream } from './data-stream-provider';
-import { AssistantMessageContent } from '@/components/json-render/assistant-message-content';
+import { buildSpecFromParts } from '@json-render/react';
+import { GenerativeUIRenderer } from '@/components/json-render/generative-ui-renderer';
+import { specHasMissingChildReferences } from '@/lib/json-render/spec-has-missing-children';
 
 /** Bedrock-safe names use `server__tool`; if absent, show full name under MCP. */
 function splitMcpToolDisplayName(fullName: string): {
@@ -166,17 +168,15 @@ const PurePreviewMessage = ({
 
   useDataStream();
 
-  const firstTextIndex = message.parts.findIndex((p) => p.type === 'text');
-  const firstDataSpecIndex = message.parts.findIndex((p) => p.type === 'data-spec');
-  const assistantUiIndex =
-    message.role === 'assistant'
-      ? (() => {
-          const candidates = [firstTextIndex, firstDataSpecIndex].filter(
-            (i) => i >= 0,
-          );
-          return candidates.length > 0 ? Math.min(...candidates) : -1;
-        })()
-      : -1;
+  const lastDataSpecPartIndex = useMemo(() => {
+    let last = -1;
+    message.parts?.forEach((p, i) => {
+      if (p.type === 'data-spec') {
+        last = i;
+      }
+    });
+    return last;
+  }, [message.parts]);
 
   return (
     <AnimatePresence>
@@ -206,6 +206,7 @@ const PurePreviewMessage = ({
               'min-h-96': message.role === 'assistant' && requiresScrollPadding,
               'w-fit': message.role === 'user',
               'w-full': message.role === 'assistant' || mode === 'edit',
+              'min-w-0': message.role === 'assistant',
             })}
           >
             {attachmentsFromMessage.length > 0 && (
@@ -241,27 +242,22 @@ const PurePreviewMessage = ({
                 );
               }
 
-              if (
-                message.role === 'assistant' &&
-                (type === 'text' || type === 'data-spec')
-              ) {
-                if (assistantUiIndex < 0 || index !== assistantUiIndex) {
+              if (message.role === 'assistant' && type === 'data-spec') {
+                if (index !== lastDataSpecPartIndex) {
                   return null;
                 }
-                if (mode === 'view') {
-                  return (
-                    <div
-                      key={`assistant-ui-${message.id}`}
-                      className="flex flex-row gap-2 items-start w-full"
-                    >
-                      <AssistantMessageContent
-                        message={message}
-                        isLoading={isLoading}
-                      />
-                    </div>
-                  );
-                }
-                return null;
+                const spec = buildSpecFromParts(message.parts ?? []);
+                return (
+                  <div key={key} className="min-w-0 w-full">
+                    <GenerativeUIRenderer
+                      spec={spec}
+                      loading={
+                        isLoading ||
+                        (spec ? specHasMissingChildReferences(spec) : false)
+                      }
+                    />
+                  </div>
+                );
               }
 
               if (type === 'text') {
@@ -387,6 +383,29 @@ const PurePreviewMessage = ({
                 );
               }
 
+              if (type === 'tool-createIshikawaDiagram') {
+                const { toolCallId, output } = part;
+
+                if (output && 'error' in output) {
+                  return (
+                    <div
+                      key={toolCallId}
+                      className="p-4 text-red-500 bg-red-50 rounded-lg border border-red-200 dark:bg-red-950/50"
+                    >
+                      Error creating Ishikawa diagram: {String(output.error)}
+                    </div>
+                  );
+                }
+
+                return (
+                  <DocumentPreview
+                    key={toolCallId}
+                    isReadonly={isReadonly}
+                    result={output}
+                  />
+                );
+              }
+
               if (type === 'tool-updateDocument') {
                 const { toolCallId } = part;
 
@@ -476,6 +495,31 @@ const PurePreviewMessage = ({
                       )}
                     </ChainOfThoughtContent>
                   </ChainOfThought>
+                );
+              }
+
+              if (type === 'tool-renderHostMap') {
+                const { toolCallId, state } = part;
+
+                return (
+                  <Tool key={toolCallId} defaultOpen={true}>
+                    <ToolHeader type="tool-renderHostMap" state={state} />
+                    <ToolContent>
+                      {state === 'input-available' && (
+                        <ToolInput input={part.input} />
+                      )}
+                      {state === 'output-available' && (
+                        <ToolOutput
+                          output={
+                            <div className="text-sm text-muted-foreground">
+                              Mapped {(part.output as any)?.markerCount ?? 0} host location(s)
+                            </div>
+                          }
+                          errorText={undefined}
+                        />
+                      )}
+                    </ToolContent>
+                  </Tool>
                 );
               }
 

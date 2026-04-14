@@ -7,12 +7,40 @@ import { normalizeAgentMcps } from '@/lib/agents/normalize-agent-mcps';
 type ExternalConfig = {
   id: string;
   name: string;
+  short_name?: string;
+  avatar?: string;
+  conversation_starters?: unknown[];
+  greetings?: unknown;
   deployment: string;
+  deployment_type?: string;
   system_prompt: string;
-  knowledge_base_ids: string[];
-  personalization_config: Record<string, unknown> | null;
+  description?: string;
+  knowledge_base_ids?: string[];
+  model_configuration?: Record<string, unknown>;
+  personalization_config?: Record<string, unknown> | null;
+  responsibilities?: unknown[];
+  risks?: Record<string, string>;
+  security?: Record<string, unknown>;
   mcps: unknown;
+  tools?: Record<string, unknown>;
+  uploaded_documents?: unknown[];
+  tags?: unknown[];
+  is_public?: boolean;
+  created_at?: string;
+  created_by?: string;
+  updated_at?: string;
 };
+
+function mapGreetings(raw: unknown): Agent['greetings'] {
+  if (!Array.isArray(raw) || raw.length === 0) {
+    return undefined;
+  }
+  const first = raw[0];
+  if (typeof first === 'string') {
+    return (raw as string[]).map((text) => ({ text }));
+  }
+  return raw as Agent['greetings'];
+}
 
 type ExternalResponse = {
   success: boolean;
@@ -24,22 +52,32 @@ type ExternalResponse = {
 
 function mapConfigToAgent(config: ExternalConfig): Agent {
   const prompt = config.system_prompt ?? '';
+  const descriptionFromPrompt =
+    prompt.length > 240 ? `${prompt.slice(0, 237)}...` : prompt;
+
   return {
     id: config.id,
     name: config.name,
-    shortName: config.name,
-    description:
-      prompt.length > 240 ? `${prompt.slice(0, 237)}...` : prompt,
-    avatar: '',
-    createdBy: '',
-    isPublic: true,
+    shortName: config.short_name ?? config.name,
+    description: config.description ?? descriptionFromPrompt,
+    avatar: config.avatar ?? '',
+    createdBy: config.created_by ?? '',
+    isPublic: config.is_public ?? true,
     deployment: config.deployment,
-    deployment_type: config.deployment,
-    createdAt: '',
-    updatedAt: '',
+    deployment_type: config.deployment_type ?? config.deployment,
+    createdAt: config.created_at ?? '',
+    updatedAt: config.updated_at ?? '',
     systemPrompt: config.system_prompt,
     knowledgeBaseIds: config.knowledge_base_ids ?? [],
+    uploadedDocuments: config.uploaded_documents,
+    modelConfig: config.model_configuration,
+    greetings: mapGreetings(config.greetings),
+    conversationStarters: config.conversation_starters,
+    responsibilities: config.responsibilities,
+    risks: config.risks,
+    tags: config.tags,
     mcps: normalizeAgentMcps(config.mcps),
+    tools: config.tools,
     personalization: config.personalization_config ?? undefined,
   };
 }
@@ -113,6 +151,30 @@ export async function GET(request: NextRequest) {
     }
 
     const agents = body.data.map(mapConfigToAgent);
+
+    console.log(
+      '[agents/by-deployment] Loaded OK',
+      JSON.stringify({
+        deployment,
+        count: agents.length,
+        agents: agents.map((a) => ({
+          id: a.id,
+          name: a.name,
+          toolKeys: a.tools && typeof a.tools === 'object'
+            ? Object.keys(a.tools as object).length
+            : 0,
+          mcpServerKeys:
+            a.mcps &&
+            typeof a.mcps === 'object' &&
+            'mcpServers' in (a.mcps as object) &&
+            (a.mcps as { mcpServers?: object }).mcpServers
+              ? Object.keys(
+                  (a.mcps as { mcpServers: object }).mcpServers,
+                ).length
+              : 0,
+        })),
+      }),
+    );
 
     return NextResponse.json({
       success: true,

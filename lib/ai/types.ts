@@ -1,8 +1,10 @@
 import type { InferUITool } from 'ai';
 import type {
   createDocument,
+  createIshikawaDiagram,
   createMermaidDiagram,
   getWeather,
+  renderHostMap,
   requestSuggestions,
   updateAgentTasks,
   updateDocument,
@@ -17,7 +19,11 @@ type requestSuggestionsTool = InferUITool<
 type createMermaidDiagramTool = InferUITool<
   ReturnType<typeof createMermaidDiagram>
 >;
+type createIshikawaDiagramTool = InferUITool<
+  ReturnType<typeof createIshikawaDiagram>
+>;
 type updateAgentTasksTool = InferUITool<typeof updateAgentTasks>;
+type renderHostMapTool = InferUITool<typeof renderHostMap>;
 
 export type ChatTools = {
   getWeather: weatherTool;
@@ -25,5 +31,7 @@ export type ChatTools = {
   updateDocument: updateDocumentTool;
   requestSuggestions: requestSuggestionsTool;
   createMermaidDiagram: createMermaidDiagramTool;
+  createIshikawaDiagram: createIshikawaDiagramTool;
   updateAgentTasks: updateAgentTasksTool;
+  renderHostMap: renderHostMapTool;
 };

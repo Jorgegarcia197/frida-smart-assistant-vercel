@@ -48,6 +48,7 @@ export default async function Page(props: { params: Promise<{ id: string }> }) {
     agentSystemPrompt: chat.agentSystemPrompt,
     agentResponsibilities: chat.agentResponsibilities,
     agentMcpConfig: chat.agentMcpConfig,
+    agentTools: chat.agentTools,
     agentKnowledgeBaseIds: chat.agentKnowledgeBaseIds,
   };
 
