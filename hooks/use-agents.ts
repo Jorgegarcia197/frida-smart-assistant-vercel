@@ -1,7 +1,13 @@
 'use client';
 
+import { useEffect } from 'react';
 import useSWR from 'swr';
 import { fetcher } from '@/lib/utils';
+
+/** Dev or `NEXT_PUBLIC_LOG_AGENT_CONFIG=true` — logs full agent payloads in the browser console. */
+export const shouldLogAgentConfigDetails =
+  process.env.NODE_ENV === 'development' ||
+  process.env.NEXT_PUBLIC_LOG_AGENT_CONFIG === 'true';
 
 export type Agent = {
   id: string;
@@ -69,7 +75,7 @@ export function useAgentsByDeployment(
   deployment = 'frida-assistant',
   enabled = true,
 ) {
-  const { data, error, isLoading, mutate } = useSWR<AgentsResponse>(
+  const { data, error, isLoading, isValidating, mutate } = useSWR<AgentsResponse>(
     enabled
       ? `/api/agents/configs/by-deployment?deployment=${encodeURIComponent(deployment)}`
       : null,
@@ -85,6 +91,20 @@ export function useAgentsByDeployment(
       fallbackData: { success: true, agents: [] },
     },
   );
+
+  useEffect(() => {
+    if (!enabled || isLoading || isValidating || error || !data?.success) return;
+    if (!shouldLogAgentConfigDetails) return;
+    console.log(
+      '[Frida Agent Builder] Agent configs from API (via /api/agents/configs/by-deployment)',
+      {
+        deployment,
+        success: data.success,
+        count: data.agents?.length ?? 0,
+        agents: data.agents,
+      },
+    );
+  }, [enabled, deployment, isLoading, isValidating, error, data]);
 
   return {
     agents: data?.agents || [],

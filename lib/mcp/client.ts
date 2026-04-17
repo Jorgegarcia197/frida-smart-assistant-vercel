@@ -2,6 +2,7 @@
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { SSEClientTransport } from '@modelcontextprotocol/sdk/client/sse.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
+import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 
 // Deep equal
 import deepEqual from 'fast-deep-equal';
@@ -46,14 +47,13 @@ const BaseConfigSchema = z.object({
     .default(DEFAULT_MCP_TIMEOUT_SECONDS),
 });
 
-const SseConfigSchema = BaseConfigSchema.extend({
+/** Remote MCP (URL + optional headers): SSE or Streamable HTTP per MCP SDK. */
+const RemoteConfigSchema = BaseConfigSchema.extend({
   url: z.string().url(),
-  /** Optional headers for SSE + follow-up POSTs (e.g. x-api-key, x-db-url from agent builder). */
+  transportType: z.enum(['sse', 'http']).default('sse'),
+  /** Optional headers for remote requests (e.g. x-api-key, x-db-url from agent builder). */
   env: z.record(z.string()).optional(),
-}).transform((config) => ({
-  ...config,
-  transportType: 'sse' as const,
-}));
+});
 
 const StdioConfigSchema = BaseConfigSchema.extend({
   command: z.string(),
@@ -64,7 +64,7 @@ const StdioConfigSchema = BaseConfigSchema.extend({
   transportType: 'stdio' as const,
 }));
 
-const ServerConfigSchema = z.union([StdioConfigSchema, SseConfigSchema]);
+const ServerConfigSchema = z.union([StdioConfigSchema, RemoteConfigSchema]);
 
 export type McpServerConfig = z.infer<typeof ServerConfigSchema>;
 
@@ -304,7 +304,7 @@ export class MCPClient {
    */
   private async newConnectToServer(
     name: string,
-    config: z.infer<typeof StdioConfigSchema> | z.infer<typeof SseConfigSchema>,
+    config: z.infer<typeof StdioConfigSchema> | z.infer<typeof RemoteConfigSchema>,
   ): Promise<void> {
     // Remove existing connection if it exists (should never happen, the connection should be deleted beforehand)
     this.connections = this.connections.filter(
@@ -323,7 +323,10 @@ export class MCPClient {
         },
       );
 
-      let transport: StdioClientTransport | SSEClientTransport;
+      let transport:
+        | StdioClientTransport
+        | SSEClientTransport
+        | StreamableHTTPClientTransport;
 
       if (config.transportType === 'sse') {
         console.log('Creating SSE transport for:', name);
@@ -337,13 +340,30 @@ export class MCPClient {
           sseOpts.requestInit = { headers };
         }
         transport = new SSEClientTransport(new URL(config.url), sseOpts);
+      } else if (config.transportType === 'http') {
+        console.log('Creating Streamable HTTP transport for:', name);
+        const httpOpts: ConstructorParameters<
+          typeof StreamableHTTPClientTransport
+        >[1] = {};
+        if (config.env && Object.keys(config.env).length > 0) {
+          const headers = new Headers();
+          for (const [key, value] of Object.entries(config.env)) {
+            headers.set(key, value);
+          }
+          httpOpts.requestInit = { headers };
+        }
+        transport = new StreamableHTTPClientTransport(
+          new URL(config.url),
+          httpOpts,
+        );
       } else {
+        const stdioConfig = config as z.infer<typeof StdioConfigSchema>;
         console.log('Creating stdio transport for:', name);
         transport = new StdioClientTransport({
-          command: config.command,
-          args: config.args,
+          command: stdioConfig.command,
+          args: stdioConfig.args,
           env: {
-            ...config.env,
+            ...stdioConfig.env,
             ...(process.env.PATH ? { PATH: process.env.PATH } : {}),
             // ...(process.env.NODE_PATH ? { NODE_PATH: process.env.NODE_PATH } : {}),
           },
@@ -439,21 +459,17 @@ export class MCPClient {
         connection.server.error = message;
       }
 
-      if (config.transportType === 'sse') {
+      if (config.transportType === 'sse' || config.transportType === 'http') {
         const is403 =
           message.includes('403') ||
           message.includes('Non-200 status code (403)');
         if (is403) {
           console.error(
-            `[MCPClient] SSE "${name}" → HTTP 403 from ${config.url}. ` +
-              'The MCP server refused the stream. This is not a Next.js bug. ' +
-              'Check: (1) x-api-key / auth headers match what that service expects, ' +
-              '(2) IP allowlist — server-side calls use your machine IP (dev) or Vercel IPs (prod), ' +
-              '(3) Azure Container Apps ingress / Entra / API Management rules.',
+            `[MCPClient] Remote (${config.transportType}) "${name}" → HTTP 403 from ${config.url}. The MCP server refused the stream. This is not a Next.js bug. Check: (1) x-api-key / auth headers match what that service expects, (2) IP allowlist — server-side calls use your machine IP (dev) or Vercel IPs (prod), (3) Azure Container Apps ingress / Entra / API Management rules.`,
           );
         } else {
           console.error(
-            `[MCPClient] Failed to connect SSE "${name}" at ${config.url}:`,
+            `[MCPClient] Failed to connect remote (${config.transportType}) "${name}" at ${config.url}:`,
             message,
           );
         }

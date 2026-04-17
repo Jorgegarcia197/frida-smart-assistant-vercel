@@ -91,8 +91,16 @@ export function getTrailingMessageId({
   return trailingMessage.id;
 }
 
+/**
+ * Strips provider artifacts and fixes common streaming glues where punctuation/colon is immediately
+ * followed by an uppercase letter with no space (e.g. "...instructions.Now", "reportlab:Perfect"),
+ * which Markdown renders as one cramped paragraph while deltas append.
+ */
 export function sanitizeText(text: string) {
-  return text.replace('<has_function_call>', '');
+  let t = text.replaceAll('<has_function_call>', '');
+  t = t.replace(/([a-z0-9])([.!?])([A-Z])/g, '$1$2 $3');
+  t = t.replace(/([a-z]):([A-Z])/g, '$1: $2');
+  return t;
 }
 
 export function getTextFromMessage(message: ChatMessage): string {

@@ -4,11 +4,29 @@
 
 Next.js chat app with OpenAI-compatible AI SDK providers, Firestore chats, and agent MCP (SSE) via `@ai-sdk/mcp`.
 
+## Future direction — multiple agents as subagents
+
+- **Goal:** Allow loading **several** Frida Agent Builder agents into one conversation and exposing them to the **main** model as **tools** that delegate to **subagents** (each subagent with its own instructions, model choice, and tool set), per the AI SDK pattern: [Subagents](https://ai-sdk.dev/docs/agents/subagents#subagents).
+- **Why:** Offload context-heavy work, isolate tool access per capability, and optionally stream subagent progress while summarizing back to the parent via `toModelOutput` so the main thread stays small.
+- **Today:** One “current” agent per chat is merged into the request body and system prompt (`buildSystemPromptSections` in `lib/ai/prompts.ts`); Agent Builder configs come from `/api/agents/configs/by-deployment` and client context (`components/chat.tsx`, `components/load-agent-content.tsx`).
+- **Later:** Model after `ToolLoopAgent` + `tool({ execute })` wrapping a nested agent; persist **multiple** agent bindings on the chat (ids + configs or refs); main system prompt describes when to call which subagent tool; consider `abortSignal` propagation and `convertToModelMessages` with `ignoreIncompleteToolCalls` for cancellation (as in the docs).
+
 ## User Defined Namespaces
 
 - (none defined)
 
 ## Patterns
+
+### Assistant markdown spacing (`components/elements/response.tsx`, `sanitizeText` in `lib/utils.ts`)
+
+- `Response` wraps Streamdown with `prose prose-sm` plus optional `dark:prose-invert` (prop `proseInvertInDark`, default true). User chat bubbles use `proseInvertInDark={false}` and `text-primary-foreground` overrides because in dark theme `bg-primary` is a light chip while `dark:prose-invert` expects a dark surface—without the opt-out, user text was nearly invisible. Extra `[&_p]` / list margins for vertical rhythm as before.
+- Reasoning / thinking UI (`components/ai-elements/reasoning.tsx`): expanded reasoning uses Streamdown with `prose prose-sm dark:prose-invert text-foreground` (not `text-muted-foreground` on the panel) so streamed thinking matches assistant markdown contrast on the dark canvas. `ReasoningTrigger` uses `text-foreground/80` instead of `text-muted-foreground`. `Shimmer` uses `--color-foreground` for its clipped gradient base so “Thinking…” stays readable while animating in dark mode.
+- `sanitizeText` inserts a missing space after `.?!` when a letter/digit is immediately followed by punctuation and then an uppercase letter (`instructions.Now` → `instructions. Now`), and after `:` when a lowercase letter is immediately followed by `:` and an uppercase letter (`reportlab:Perfect` → `reportlab: Perfect`), mitigating glued tokens while stream deltas append to the same `text` part.
+
+### MCP tool-call repair (`lib/ai/mcp-tool-call-repair.ts`)
+
+- When the gateway streams `{}`, `experimental_repairToolCall` may recover args from message text. **CheckMK:** tools matching `/CheckMK/i` with schema `query` or `jsonquery_string` — collect all `{"op":…}` jsonquery blobs in text (current turn slice first, then full thread), pick the **longest** candidate (generic, not domain-tuned). **SQL MCP:** `table_name` / `table` extraction unchanged. CheckMK call shapes and filters are defined by the **agent system prompt**; `lib/ai/prompts.ts` adds a short reminder when any tool name matches CheckMK.
+- **Per-request MCP dedupe** (`lib/mcp/ai-sdk-mcp-tools.ts` + `getMcpToolsForAI`): identical normalized tool input in one POST can return a cached MCP result.
 
 ### Chat message list virtualization (`components/virtualized-message-list.tsx`)
 
@@ -17,8 +35,19 @@ Next.js chat app with OpenAI-compatible AI SDK providers, Firestore chats, and a
 ### PDF uploads vs OpenAI-compatible chat (`lib/ai/expand-pdf-parts-for-model.ts`)
 
 - User messages can include `file` parts with `application/pdf`, but many OpenAI-compatible gateways throw `AI_UnsupportedFunctionalityError` for PDF file parts.
-- Before `convertToModelMessages`, `expandPdfFilePartsForModel` fetches the PDF URL, runs `pdf-parse` server-side, and replaces each PDF file part with a `text` part (truncated at 120k chars). Stored chat messages keep original parts for the UI.
+- `extractPdfTextFromUrl(url)` fetches + `pdf-parse` and clamps to `MAX_PDF_TEXT_CHARS = 120_000`. `expandPdfFilePartsForModel` wraps it into text parts (PDF-only) and is kept for any callers that don't need office support.
 - Import `pdf-parse/lib/pdf-parse.js` (not `pdf-parse`): the package root `index.js` runs a debug `readFileSync('./test/data/05-versions-space.pdf')` when `!module.parent`, which breaks under Next/Turbopack (`ENOENT`).
+
+### Office (OOXML) uploads vs OpenAI-compatible chat (`lib/ai/expand-office-parts-for-model.ts`, `lib/ai/expand-file-parts-for-model.ts`)
+
+- PPTX / DOCX / XLSX are **not** native multimodal document blocks on the Anthropic provider (AI SDK docs describe PDF only). Following the Claude Code model, we extract text server-side instead of forwarding the binary as a `file` part.
+- `expand-office-parts-for-model.ts` exposes `extractOfficeTextFromUrl(url, mime)` with `MAX_OFFICE_TEXT_CHARS = 120_000`:
+  - DOCX → `mammoth.extractRawText({ buffer })`.
+  - XLSX → `XLSX.read + sheet_to_csv`, per-sheet header `## Sheet: <name>` with a 2,000-row cap per sheet.
+  - PPTX → `JSZip.loadAsync` → walk `ppt/slides/slide*.xml` (ordered numerically) extracting `<a:t>` runs; speaker notes (`ppt/notesSlides/notesSlide*.xml`) are appended as `[Speaker notes]` blocks per slide.
+- `expand-file-parts-for-model.ts` (`expandFilePartsForModel(messages)`) unifies PDF + OOXML in a single parts walk. Stored messages still use the original `file` parts; only the model-bound copy is transformed. Office text parts include an explicit disclaimer that layout, images, and embedded charts may be missing.
+- Chat route (`app/(chat)/api/chat/route.ts`) calls the unified `expandFilePartsForModel` before `convertToModelMessages`. Upload allowlist (`app/(chat)/api/files/upload/route.ts`) and `postRequestBodySchema` (`app/(chat)/api/chat/schema.ts`) both accept the three OOXML MIME types in addition to PDF + image. The composer's hidden `<input type="file">` `accept` attribute in `components/multimodal-input.tsx` advertises `.pptx/.docx/.xlsx` so the OS picker surfaces them.
+- `components/preview-attachment.tsx` now renders non-image attachments with an uppercased extension badge (PPTX, DOCX, XLSX, PDF, …) instead of the literal "File" placeholder.
 
 ### OpenAI-compatible provider routing (`lib/ai/providers.ts`)
 
@@ -27,6 +56,31 @@ Next.js chat app with OpenAI-compatible AI SDK providers, Firestore chats, and a
 - Per-role model overrides are supported via `CHAT_MODEL`, `REASONING_MODEL`, `TITLE_MODEL`, `ARTIFACT_MODEL`, and `EMBEDDING_MODEL`; all chat roles fall back to `LLM_MODEL_NAME`.
 - Reasoning model still uses `extractReasoningMiddleware({ tagName: 'think' })` around the OpenAI-compatible language model.
 - Embeddings route through the same provider (`textEmbeddingModel('embeddings-model')`), and `lib/embeddings/azure.ts` remains the single helper entrypoint with generic logging.
+
+### System prompt assembly (`lib/ai/prompts.ts`, `app/(chat)/api/chat/route.ts`)
+
+- `systemPrompt(input)` is now a thin wrapper around `buildSystemPromptSections(input)` + `joinSystemPromptSections(sections)`. Each section is `{ id, kind: 'static' | 'dynamic', content }`. String output is byte-identical to the previous single-template implementation; existing callers keep working.
+- Ordered sections: `base` (static), `responsibilities`, `knowledgeBase`, `mcpTools`, `anthropicSkills`, `nativeFileMode`, `desktopComputerUse` (all dynamic), `tasks` (static), `generativeUi` (static), `reasoningModel` (dynamic), `requestInfo` (dynamic — geo hints), `artifacts` (static, omitted in native-file strict mode).
+- `joinSystemPromptSections(sections, { includeBoundary: true })` inserts the literal `SYSTEM_PROMPT_DYNAMIC_BOUNDARY` marker between the trailing static run and the first dynamic section. Default join **omits** the marker because it is a processing hint and must not reach the model on providers that do not strip it.
+- `buildEffectiveSystemPrompt({ overrideSystemPrompt, appendSystemPrompt, build })` centralizes precedence (override replaces everything; append concatenates with `\n\n`). The chat route reads `SYSTEM_PROMPT_OVERRIDE` / `SYSTEM_PROMPT_APPEND` env vars so overrides are testable without code changes.
+- `dumpSystemPrompt(sections)` renders a per-section diagnostic (id, kind, char count, preview) with light secret redaction (`Bearer …`, `sk-…`, `api_key|secret|token|password = …`). Gated in the chat route behind `DEBUG_SYSTEM_PROMPT=true`; the previous per-fragment `console.log('🔧 …')` calls were removed from `prompts.ts`.
+
+### Native file generation — avoid duplicate exports (`lib/ai/prompts.ts`)
+
+- When `anthropicSkillsEnabled` is true, `systemPrompt` includes a **single successful output** rule: for one user-requested PDF/PPTX/DOCX/XLSX deliverable, stop after the first successful file in tool results — do not re-run bash/code execution to save the same content under `1.pptx`/`2.pptx`/renamed copies. `forceNativeFileSkills` adds a short echo: no duplicate re-execution after success. This targets token waste from redundant tool loops (UI dedupe alone does not help).
+
+### Anthropic skills passthrough + file downloads (`app/(chat)/api/chat/route.ts`, `app/(chat)/api/files/*`)
+
+- Claude model requests now default to `providerOptions.openaiCompatible.anthropicExtensions` with code execution enabled and default built-in skills (`pptx`, `docx`, `pdf`, `xlsx`) unless overridden by env vars.
+- `systemPrompt` now receives Anthropic skills context (`anthropicSkillsEnabled`, `anthropicSkills`) and explicitly prioritizes native file-skill generation for PDF/PPTX/DOCX/XLSX requests over artifact fallbacks.
+- File proxy routes expose metadata/content from the compatible backend via authenticated app endpoints: `/api/files/{fileId}` and `/api/files/{fileId}/content`.
+- `message.tsx` `splitDynamicToolDisplayName`: model tool ids with `server__tool` (from `collectAiSdkMcpTools`) show as **MCP** (`MCP · {server}` badge, Server icon); ids without `__` (agent custom HTTP tools from `lib/ai/tools/agent-custom-api-tools.ts`) show as **API** (`API` badge, Plug icon). Titles use neutral “Tool … completed” / “Calling MCP|API tool …”. **Important:** `sanitizeModelToolName` in `app/(chat)/api/chat/route.ts` must sanitize each segment of `server__tool` separately so `__` is not collapsed to `_` (otherwise MCP tools look like `northwindmcp_execute_query` and were mislabeled as API). Legacy persisted names matching `^(.+mcp)_(.+)$` are still treated as MCP for old threads.
+- Tool-result UI (`components/tool-card.tsx`, export `ToolCard`) extracts `file_ids`/`file_id`, fetches metadata for friendly names/mime types, and renders download links through `/api/files/{fileId}/content`. The subtitle under each link uses `getGeneratedFileTypeSubtitle` (`lib/generated-file-label.ts`) so Office files show labels like “PowerPoint presentation” instead of raw `application/zip`. Non-delegated MCP cards include a collapsible **Tool parameters (JSON)** section showing the tool `input` (including `{}` when the model sends an empty object). `message.tsx` passes `part.input` for `dynamic-tool` in both in-flight and completed/error states. For **Anthropic code execution** tools (`text_editor_code_execution`, `bash_code_execution`, `code_execution`), `anthropicDelegated` hides the MCP `Card` and uses **ai-elements `Task`** (`TaskTrigger` / `TaskContent` / `TaskItem` / `TaskItemFile` from `components/ai-elements/task.tsx`): loading shows an in-progress task; errors show a failed task; success lists each file with optional image preview and a `TaskItemFile` chip linking to `/api/files/{id}/content`. In `message.tsx`, `isAnthropicDelegatedToolName` applies the same behavior to `dynamic-tool` parts (passthrough tools from `createAnthropicSkillsPassthroughTools`), not only literal `tool-*` part types.
+- Remote MCP tools (`lib/mcp/ai-sdk-mcp-tools.ts` `collectAiSdkMcpTools`): `resolveTransportType` maps agent `mcpServers` entries to `sse` / `http` (AI SDK `createMCPClient` transport types) or `stdio` (legacy `MCPClient`). `transportType: 'streamable-http'` normalizes to `http`. Connection logs: `[AI SDK MCP] Connecting "<name>": transport=sse|http, url=…`. `wrapAiSdkMcpTool` logs each call: `[AI SDK MCP] call <modelToolName> input: …`, then `ok` / `error`. Inputs are validated with `safeValidateTypes` before MCP; if the MCP JSON Schema has `properties` but omits `required`/`minProperties`, `emptyPayloadViolatesInferredNonEmptyObject` (via `asSchema(…).jsonSchema`) blocks `{}`/all-empty values for any tool/agent—composite schemas (`allOf`/`$ref`/…) skip inference. Invalid calls log `blocked … (inferred non-empty args from JSON Schema, not calling MCP)`. `filterToLegacyMcpServers` strips sse/http so only stdio-style entries merge in `MCPClient`. Legacy `MCPClient` remote configs use `RemoteConfigSchema` (`sse` | `http`); streamable HTTP uses `StreamableHTTPClientTransport`. Chat route uses `collectAiSdkMcpTools` + `filterToLegacyMcpServers`. Tool ids use `sanitizeModelToolName`.
+- Optional `DEBUG_CHAT_STREAM_CHUNKS=true` logs each `streamText` `onChunk` event in `app/(chat)/api/chat/route.ts` (model-layer chunks, not SSE wire format).
+- Reasoning UI (`components/ai-elements/reasoning.tsx`) formats completed thinking duration as human-readable intervals (e.g. `3m 5s`, `1 hour`) instead of large second counts.
+- For prompts that explicitly request native files (PDF/PPTX/DOCX/XLSX), chat route enables strict native-file mode: it passes `forceNativeFileSkills` to `systemPrompt`, omits artifact prompt rules for that turn, and removes artifact tools (`createDocument`, `updateDocument`, `requestSuggestions`, `createIshikawaDiagram`, `createMermaidDiagram`) from `toolsForModel`/`activeTools` to prevent fallback into artifact generation.
+- The chat route still registers pass-through tools (`text_editor_code_execution`, `bash_code_execution`, `code_execution`) so the AI SDK accepts Anthropic tool calls; the compatible backend also injects those same tools. `lib/ai/providers.ts` `transformRequestBody` removes those three from the outgoing `tools` array when `providerOptions.openaiCompatible.anthropicExtensions` has code execution enabled, so Anthropic never sees duplicate tool names.
 
 ### Data stream → artifact routing (`components/data-stream-handler.tsx`)
 
@@ -91,7 +145,7 @@ Next.js chat app with OpenAI-compatible AI SDK providers, Firestore chats, and a
 
 ### SSE MCP tool wrapping (`lib/mcp/ai-sdk-mcp-tools.ts`)
 
-- `wrapMcpToolForBedrock` must keep the `inputSchema` from `@ai-sdk/mcp` `client.tools()` (MCP JSON Schema with required fields). Replacing it with a loose Zod preprocess that defaulted to `{}` let empty tool calls reach the server (e.g. missing `query` on `execute_query`).
+- `wrapAiSdkMcpTool` must keep the `inputSchema` from `@ai-sdk/mcp` `client.tools()` (MCP JSON Schema with required fields). Replacing it with a loose Zod preprocess that defaulted to `{}` let empty tool calls reach the server (e.g. missing `query` on `execute_query`).
 
 ### MCP env merge (`lib/mcp/merge-server-mcp-env.ts`)
 

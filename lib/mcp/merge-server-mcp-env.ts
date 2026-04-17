@@ -15,8 +15,10 @@ const DB_HEADER_KEYS = [
   'x-db-name',
 ] as const;
 
-function isSseLikeConfig(cfg: Record<string, unknown>): boolean {
-  if (cfg.transportType === 'sse') return true;
+/** Remote URL-based configs (SSE or Streamable HTTP) — apply env fallbacks. */
+function isRemoteConfig(cfg: Record<string, unknown>): boolean {
+  const t = cfg.transportType;
+  if (t === 'sse' || t === 'http' || t === 'streamable-http') return true;
   return typeof cfg.url === 'string' && cfg.url.length > 0;
 }
 
@@ -53,7 +55,7 @@ export function applyServerMcpSecretsFromEnv(agentMcpConfig: unknown): unknown {
   for (const [name, serverRaw] of Object.entries(raw.mcpServers)) {
     if (!serverRaw || typeof serverRaw !== 'object') continue;
     const cfg = { ...(serverRaw as Record<string, unknown>) };
-    if (!isSseLikeConfig(cfg)) {
+    if (!isRemoteConfig(cfg)) {
       mcpServers[name] = cfg;
       continue;
     }

@@ -8,7 +8,10 @@ import { toast } from 'sonner';
 import { useEffect, useState } from 'react';
 import { X, Bot, Loader2, RefreshCw } from 'lucide-react';
 import { useAgentForChat } from './agent-provider';
-import { useAgentsByDeployment } from '@/hooks/use-agents';
+import {
+  shouldLogAgentConfigDetails,
+  useAgentsByDeployment,
+} from '@/hooks/use-agents';
 
 type LoadAgentContentProps = {
   chatId: string;
@@ -85,6 +88,12 @@ const LoadAgentContent = ({
             mcpServerCount: mcpCount,
           }),
         );
+        if (shouldLogAgentConfigDetails) {
+          console.log(
+            '[Load Agent] Full agent configuration (from Agent Builder API)',
+            selectedAgent,
+          );
+        }
 
         setCurrentAgent(selectedAgent);
         toast.success(`Agent "${selectedAgent.name}" loaded successfully`);

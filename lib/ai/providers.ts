@@ -19,6 +19,11 @@ interface OpenAICompatibleConfig {
   embeddingModel: string;
 }
 
+export interface OpenAICompatibleRuntimeConfig {
+  apiKey: string;
+  baseUrl: string;
+}
+
 const DEBUG_OPENAI_COMPATIBLE = process.env.DEBUG_OPENAI_COMPATIBLE === 'true';
 const MAX_DEBUG_BODY_CHARS = 4000;
 
@@ -34,6 +39,162 @@ function parseMaybeJson(value: string): unknown {
   } catch {
     return value;
   }
+}
+
+function normalizeOpenAICompatibleProviderOptions(
+  body: Record<string, unknown>,
+): Record<string, unknown> {
+  const existingProviderOptions =
+    body.providerOptions &&
+    typeof body.providerOptions === 'object' &&
+    !Array.isArray(body.providerOptions)
+      ? (body.providerOptions as Record<string, unknown>)
+      : {};
+
+  const existingOpenAICompatible =
+    existingProviderOptions.openaiCompatible &&
+    typeof existingProviderOptions.openaiCompatible === 'object' &&
+    !Array.isArray(existingProviderOptions.openaiCompatible)
+      ? (existingProviderOptions.openaiCompatible as Record<string, unknown>)
+      : {};
+
+  const mirroredFields: Record<string, unknown> = {};
+
+  if (
+    body.anthropicExtensions !== undefined &&
+    existingOpenAICompatible.anthropicExtensions === undefined
+  ) {
+    mirroredFields.anthropicExtensions = body.anthropicExtensions;
+  }
+
+  if (
+    body.user !== undefined &&
+    existingOpenAICompatible.user === undefined
+  ) {
+    mirroredFields.user = body.user;
+  }
+
+  if (
+    body.reasoning_effort !== undefined &&
+    existingOpenAICompatible.reasoningEffort === undefined
+  ) {
+    mirroredFields.reasoningEffort = body.reasoning_effort;
+  } else if (
+    body.reasoningEffort !== undefined &&
+    existingOpenAICompatible.reasoningEffort === undefined
+  ) {
+    mirroredFields.reasoningEffort = body.reasoningEffort;
+  }
+
+  if (
+    body.text_verbosity !== undefined &&
+    existingOpenAICompatible.textVerbosity === undefined
+  ) {
+    mirroredFields.textVerbosity = body.text_verbosity;
+  } else if (
+    body.textVerbosity !== undefined &&
+    existingOpenAICompatible.textVerbosity === undefined
+  ) {
+    mirroredFields.textVerbosity = body.textVerbosity;
+  }
+
+  if (
+    body.strict_json_schema !== undefined &&
+    existingOpenAICompatible.strictJsonSchema === undefined
+  ) {
+    mirroredFields.strictJsonSchema = body.strict_json_schema;
+  } else if (
+    body.strictJsonSchema !== undefined &&
+    existingOpenAICompatible.strictJsonSchema === undefined
+  ) {
+    mirroredFields.strictJsonSchema = body.strictJsonSchema;
+  }
+
+  if (Object.keys(mirroredFields).length === 0) {
+    return body;
+  }
+
+  return {
+    ...body,
+    providerOptions: {
+      ...existingProviderOptions,
+      openaiCompatible: {
+        ...existingOpenAICompatible,
+        ...mirroredFields,
+      },
+    },
+  };
+}
+
+/** Names the compatible backend injects for Anthropic code execution; must not appear twice in `tools`. */
+const ANTHROPIC_BACKEND_CODE_EXECUTION_TOOL_NAMES = new Set([
+  'text_editor_code_execution',
+  'bash_code_execution',
+  'code_execution',
+]);
+
+function getOpenAICompatibleToolName(tool: unknown): string | undefined {
+  if (!tool || typeof tool !== 'object') return undefined;
+  const t = tool as Record<string, unknown>;
+  if (t.type === 'function' && t.function && typeof t.function === 'object') {
+    const fn = t.function as Record<string, unknown>;
+    if (typeof fn.name === 'string') return fn.name;
+  }
+  if (typeof t.name === 'string') return t.name;
+  return undefined;
+}
+
+/**
+ * When `anthropicExtensions` enables code execution, the compatible server injects
+ * Anthropic's code-execution tools. The chat route also registers pass-through tools
+ * with the same names so the AI SDK accepts tool calls — but the upstream API rejects
+ * duplicate tool names. Drop client-sent duplicates for the HTTP request only.
+ */
+function stripAnthropicBackendDuplicateTools(
+  body: Record<string, unknown>,
+): Record<string, unknown> {
+  const providerOptions = body.providerOptions;
+  if (
+    !providerOptions ||
+    typeof providerOptions !== 'object' ||
+    Array.isArray(providerOptions)
+  ) {
+    return body;
+  }
+  const po = providerOptions as Record<string, unknown>;
+  const oac = po.openaiCompatible;
+  if (!oac || typeof oac !== 'object' || Array.isArray(oac)) {
+    return body;
+  }
+  const openaiCompat = oac as Record<string, unknown>;
+  const ext = openaiCompat.anthropicExtensions;
+  if (!ext || typeof ext !== 'object' || Array.isArray(ext)) {
+    return body;
+  }
+  const anthropicExt = ext as { enableCodeExecution?: boolean };
+  if (anthropicExt.enableCodeExecution === false) {
+    return body;
+  }
+
+  const tools = body.tools;
+  if (!Array.isArray(tools) || tools.length === 0) {
+    return body;
+  }
+
+  const filtered = tools.filter((tool) => {
+    const name = getOpenAICompatibleToolName(tool);
+    if (!name) return true;
+    return !ANTHROPIC_BACKEND_CODE_EXECUTION_TOOL_NAMES.has(name);
+  });
+
+  if (filtered.length === tools.length) {
+    return body;
+  }
+
+  return {
+    ...body,
+    tools: filtered,
+  };
 }
 
 function getOpenAICompatibleConfig(): OpenAICompatibleConfig {
@@ -59,6 +220,34 @@ function getOpenAICompatibleConfig(): OpenAICompatibleConfig {
   };
 }
 
+export function getOpenAICompatibleRuntimeConfig(): OpenAICompatibleRuntimeConfig {
+  const config = getOpenAICompatibleConfig();
+
+  return {
+    apiKey: config.apiKey,
+    baseUrl: config.baseUrl,
+  };
+}
+
+export function resolveConfiguredLanguageModelId(modelId: string): string {
+  if (isTestEnvironment) {
+    if (modelId === 'chat-model') return 'chat-model';
+    if (modelId === 'chat-model-reasoning') return 'chat-model-reasoning';
+    if (modelId === 'title-model') return 'title-model';
+    if (modelId === 'artifact-model') return 'artifact-model';
+    return modelId;
+  }
+
+  const config = getOpenAICompatibleConfig();
+
+  if (modelId === 'chat-model') return config.chatModel;
+  if (modelId === 'chat-model-reasoning') return config.reasoningModel;
+  if (modelId === 'title-model') return config.titleModel;
+  if (modelId === 'artifact-model') return config.artifactModel;
+
+  return modelId;
+}
+
 let openAICompatibleInstance: ReturnType<typeof createOpenAICompatible> | null =
   null;
 
@@ -73,9 +262,14 @@ function getOpenAICompatibleInstance() {
       },
       supportsStructuredOutputs: true,
       transformRequestBody: (body) => {
+        const normalizedBody = normalizeOpenAICompatibleProviderOptions(
+          body as Record<string, unknown>,
+        );
+        const requestBody = stripAnthropicBackendDuplicateTools(normalizedBody);
+
         if (DEBUG_OPENAI_COMPATIBLE) {
           try {
-            const serialized = JSON.stringify(body);
+            const serialized = JSON.stringify(requestBody);
             console.log(
               '🔍 [openai-compatible] transformed request body',
               parseMaybeJson(truncateForLog(serialized)),
@@ -87,7 +281,7 @@ function getOpenAICompatibleInstance() {
             );
           }
         }
-        return body;
+        return requestBody;
       },
       fetch: async (input, init) => {
         const url = typeof input === 'string' ? input : input.toString();

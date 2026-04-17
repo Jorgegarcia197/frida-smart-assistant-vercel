@@ -53,8 +53,8 @@ function buildAuthHeaders(
  */
 export function buildAgentCustomApiTools(
   raw: unknown,
-  sanitizeBedrockToolName: (raw: string, used: Set<string>) => string,
-  bedrockToolNames: Set<string>,
+  sanitizeModelToolName: (raw: string, used: Set<string>) => string,
+  usedModelToolNames: Set<string>,
 ): {
   tools: Record<string, ReturnType<typeof dynamicTool>>;
   activeNames: string[];
@@ -78,7 +78,7 @@ export function buildAgentCustomApiTools(
     const method = (cfg.httpMethod ?? 'GET').toUpperCase();
     const label = tool.name || tool.id || mapKey;
     const internalKey = `${label}_${mapKey}`.replace(/\s+/g, '_');
-    const toolName = sanitizeBedrockToolName(internalKey, bedrockToolNames);
+    const toolName = sanitizeModelToolName(internalKey, usedModelToolNames);
 
     const useQuery = needsQueryPlaceholder(tool);
     const inputSchema = useQuery

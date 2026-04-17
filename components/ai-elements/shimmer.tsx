@@ -60,7 +60,7 @@ const ShimmerComponent = ({
         {
           "--spread": `${dynamicSpread}px`,
           backgroundImage:
-            "var(--bg), linear-gradient(var(--color-muted-foreground), var(--color-muted-foreground))",
+            "var(--bg), linear-gradient(var(--color-foreground), var(--color-foreground))",
         } as CSSProperties
       }
       transition={{

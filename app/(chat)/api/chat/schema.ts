@@ -7,7 +7,14 @@ const textPartSchema = z.object({
 
 const filePartSchema = z.object({
   type: z.enum(['file']),
-  mediaType: z.enum(['image/jpeg', 'image/png', 'application/pdf']),
+  mediaType: z.enum([
+    'image/jpeg',
+    'image/png',
+    'application/pdf',
+    'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+    'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  ]),
   filename: z
     .string()
     .min(1)

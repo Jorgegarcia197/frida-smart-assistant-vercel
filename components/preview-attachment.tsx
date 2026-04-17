@@ -3,6 +3,18 @@ import { CrossSmallIcon } from './icons';
 import { Button } from './ui/button';
 import { Loader } from './elements/loader';
 
+function getFileBadge(name?: string, contentType?: string): string {
+  const ext = name?.split('.').pop()?.toLowerCase();
+  if (ext && ext.length <= 5) return ext.toUpperCase();
+
+  const mime = contentType?.toLowerCase() ?? '';
+  if (mime.endsWith('presentationml.presentation')) return 'PPTX';
+  if (mime.endsWith('wordprocessingml.document')) return 'DOCX';
+  if (mime.endsWith('spreadsheetml.sheet')) return 'XLSX';
+  if (mime === 'application/pdf') return 'PDF';
+  return 'FILE';
+}
+
 export const PreviewAttachment = ({
   attachment,
   isUploading = false,
@@ -28,8 +40,8 @@ export const PreviewAttachment = ({
           className="w-full h-full object-cover"
         />
       ) : (
-        <div className="w-full h-full flex items-center justify-center text-xs text-muted-foreground">
-          File
+        <div className="w-full h-full flex items-center justify-center text-[10px] font-semibold tracking-wide text-muted-foreground uppercase">
+          {getFileBadge(name, contentType)}
         </div>
       )}
 

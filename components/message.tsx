@@ -17,7 +17,7 @@ import { MessageEditor } from './message-editor';
 import { DocumentPreview } from './document-preview';
 import { MessageReasoning } from './message-reasoning';
 import type { UseChatHelpers } from '@ai-sdk/react';
-import { McpToolCard } from './mcp-tool-card';
+import { ToolCard } from './tool-card';
 import type { ChatMessage } from '@/lib/types';
 import { Attachments } from './elements/attachments';
 import {
@@ -29,6 +29,7 @@ import {
 } from './elements/tool';
 import { MessageContent } from './elements/message';
 import { Response } from './elements/response';
+import { Loader } from './elements/loader';
 import { Shimmer } from './elements/shimmer';
 import {
   ChainOfThought,
@@ -41,19 +42,67 @@ import { buildSpecFromParts } from '@json-render/react';
 import { GenerativeUIRenderer } from '@/components/json-render/generative-ui-renderer';
 import { specHasMissingChildReferences } from '@/lib/json-render/spec-has-missing-children';
 
-/** Bedrock-safe names use `server__tool`; if absent, show full name under MCP. */
-function splitMcpToolDisplayName(fullName: string): {
+/**
+ * MCP tools use `server__tool` ids from @ai-sdk/mcp (`collectAiSdkMcpTools`). Agent custom HTTP
+ * tools use a single sanitized name (no `__`). Older chats may show `northwindmcp_execute_query`
+ * because `sanitizeModelToolName` used to collapse `__` into `_` — detect that legacy shape too.
+ */
+function splitDynamicToolDisplayName(fullName: string): {
   serverName: string;
   shortToolName: string;
+  toolSource: 'mcp' | 'api';
 } {
   if (fullName.includes('__')) {
     const idx = fullName.indexOf('__');
     return {
       serverName: fullName.slice(0, idx),
       shortToolName: fullName.slice(idx + 2),
+      toolSource: 'mcp',
     };
   }
-  return { serverName: 'MCP', shortToolName: fullName };
+  // Legacy: collapsed delimiter — agent MCP servers are often named *mcp (e.g. northwindmcp).
+  const legacyMcp = /^(.+mcp)_(.+)$/i.exec(fullName);
+  if (legacyMcp?.[1] && legacyMcp[2]) {
+    return {
+      serverName: legacyMcp[1],
+      shortToolName: legacyMcp[2],
+      toolSource: 'mcp',
+    };
+  }
+  return { serverName: 'API', shortToolName: fullName, toolSource: 'api' };
+}
+
+/** Anthropic skills passthrough tools from `createAnthropicSkillsPassthroughTools` (dynamicTool). */
+const ANTHROPIC_DELEGATED_TOOL_NAMES = new Set([
+  'text_editor_code_execution',
+  'bash_code_execution',
+  'code_execution',
+]);
+
+function isAnthropicDelegatedToolName(fullToolName: string): boolean {
+  const { shortToolName } = splitDynamicToolDisplayName(fullToolName);
+  return ANTHROPIC_DELEGATED_TOOL_NAMES.has(shortToolName);
+}
+
+function isAnthropicCodeExecutionToolType(type: string): boolean {
+  return (
+    type === 'tool-text_editor_code_execution' ||
+    type === 'tool-bash_code_execution' ||
+    type === 'tool-code_execution'
+  );
+}
+
+function getAnthropicCodeExecutionToolName(type: string): string {
+  if (type === 'tool-text_editor_code_execution') {
+    return 'text_editor_code_execution';
+  }
+  if (type === 'tool-bash_code_execution') {
+    return 'bash_code_execution';
+  }
+  if (type === 'tool-code_execution') {
+    return 'code_execution';
+  }
+  return type.replace(/^tool-/, '');
 }
 
 type AgentTaskStatus = 'pending' | 'in_progress' | 'completed' | 'failed';
@@ -290,7 +339,16 @@ const PurePreviewMessage = ({
                           'bg-transparent -ml-4': message.role === 'assistant',
                         })}
                       >
-                        <Response>{sanitizeText(part.text)}</Response>
+                        <Response
+                          proseInvertInDark={message.role !== 'user'}
+                          className={
+                            message.role === 'user'
+                              ? 'text-primary-foreground [&_*]:text-primary-foreground'
+                              : undefined
+                          }
+                        >
+                          {sanitizeText(part.text)}
+                        </Response>
                       </MessageContent>
                     </div>
                   );
@@ -523,6 +581,69 @@ const PurePreviewMessage = ({
                 );
               }
 
+              if (isAnthropicCodeExecutionToolType(type)) {
+                const toolPart = part as {
+                  toolCallId: string;
+                  state:
+                    | 'input-streaming'
+                    | 'input-available'
+                    | 'output-available'
+                    | 'output-error'
+                    | string;
+                  input?: unknown;
+                  output?: unknown;
+                  errorText?: string;
+                };
+                const toolName = getAnthropicCodeExecutionToolName(type);
+
+                if (
+                  toolPart.state === 'input-streaming' ||
+                  toolPart.state === 'input-available'
+                ) {
+                  return (
+                    <ToolCard
+                      key={toolPart.toolCallId}
+                      serverName="Anthropic Skills"
+                      toolName={toolName}
+                      state="call"
+                      args={toolPart.input}
+                      isReadonly={isReadonly}
+                      anthropicDelegated
+                    />
+                  );
+                }
+
+                if (toolPart.state === 'output-available') {
+                  return (
+                    <ToolCard
+                      key={toolPart.toolCallId}
+                      serverName="Anthropic Skills"
+                      toolName={toolName}
+                      state="result"
+                      args={toolPart.input}
+                      result={toolPart.output}
+                      isReadonly={isReadonly}
+                      anthropicDelegated
+                    />
+                  );
+                }
+
+                if (toolPart.state === 'output-error') {
+                  return (
+                    <ToolCard
+                      key={toolPart.toolCallId}
+                      serverName="Anthropic Skills"
+                      toolName={toolName}
+                      state="result"
+                      args={toolPart.input}
+                      result={{ error: toolPart.errorText }}
+                      isReadonly={isReadonly}
+                      anthropicDelegated
+                    />
+                  );
+                }
+              }
+
               // MCP / dynamic tools (incl. @ai-sdk/mcp): part.toolName, not literal `type`
               if (type === 'dynamic-tool') {
                 const { state, toolCallId } = part;
@@ -530,49 +651,70 @@ const PurePreviewMessage = ({
                   'toolName' in part && typeof part.toolName === 'string'
                     ? part.toolName
                     : 'unknown';
-                const { serverName, shortToolName } =
-                  splitMcpToolDisplayName(fullToolName);
+                const { serverName, shortToolName, toolSource } =
+                  splitDynamicToolDisplayName(fullToolName);
+                const anthropicDelegated =
+                  isAnthropicDelegatedToolName(fullToolName);
 
                 if (state === 'input-streaming' || state === 'input-available') {
                   return (
-                    <McpToolCard
+                    <ToolCard
                       key={toolCallId}
                       serverName={serverName}
                       toolName={shortToolName}
+                      toolSource={toolSource}
                       state="call"
                       args={'input' in part ? part.input : undefined}
                       isReadonly={isReadonly}
+                      anthropicDelegated={anthropicDelegated}
                     />
                   );
                 }
 
                 if (state === 'output-available') {
                   return (
-                    <McpToolCard
+                    <ToolCard
                       key={toolCallId}
                       serverName={serverName}
                       toolName={shortToolName}
+                      toolSource={toolSource}
                       state="result"
+                      args={'input' in part ? part.input : undefined}
                       result={part.output}
                       isReadonly={isReadonly}
+                      anthropicDelegated={anthropicDelegated}
                     />
                   );
                 }
 
                 if (state === 'output-error') {
                   return (
-                    <McpToolCard
+                    <ToolCard
                       key={toolCallId}
                       serverName={serverName}
                       toolName={shortToolName}
+                      toolSource={toolSource}
                       state="result"
+                      args={'input' in part ? part.input : undefined}
                       result={{ error: part.errorText }}
                       isReadonly={isReadonly}
+                      anthropicDelegated={anthropicDelegated}
                     />
                   );
                 }
               }
             })}
+
+            {message.role === 'assistant' && isLoading && (
+              <div
+                className="flex items-center gap-2 text-muted-foreground -ml-4"
+                aria-busy="true"
+                aria-live="polite"
+              >
+                <Loader size={16} className="shrink-0" />
+                <span className="sr-only">Assistant is still generating</span>
+              </div>
+            )}
 
             {!isReadonly && (
               <MessageActions

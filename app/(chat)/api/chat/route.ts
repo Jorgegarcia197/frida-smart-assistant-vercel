@@ -6,9 +6,16 @@ import {
   JsonToSseTransformStream,
   dynamicTool,
 } from 'ai';
+import { createMcpToolCallRepair } from '@/lib/ai/mcp-tool-call-repair';
 import { pipeJsonRender } from '@json-render/core';
 import { auth } from '@/app/(auth)/auth';
-import { type RequestHints, systemPrompt } from '@/lib/ai/prompts';
+import {
+  type RequestHints,
+  buildEffectiveSystemPrompt,
+  buildSystemPromptSections,
+  dumpSystemPrompt,
+  joinSystemPromptSections,
+} from '@/lib/ai/prompts';
 import {
   createStreamId,
   deleteChatById,
@@ -29,8 +36,11 @@ import { createIshikawaDiagram } from '@/lib/ai/tools/create-ishikawa-diagram';
 import { createMermaidDiagram } from '@/lib/ai/tools/create-mermaid-diagram';
 import { updateAgentTasks } from '@/lib/ai/tools/update-agent-tasks';
 import { renderHostMap } from '@/lib/ai/tools/render-host-map';
-import { expandPdfFilePartsForModel } from '@/lib/ai/expand-pdf-parts-for-model';
-import { myProvider } from '@/lib/ai/providers';
+import { expandFilePartsForModel } from '@/lib/ai/expand-file-parts-for-model';
+import {
+  myProvider,
+  resolveConfiguredLanguageModelId,
+} from '@/lib/ai/providers';
 import { getMcpClientInstance } from '@/lib/mcp/mcp-singleton-instance';
 import { normalizeAgentMcps } from '@/lib/agents/normalize-agent-mcps';
 import {
@@ -38,13 +48,14 @@ import {
   redactMcpConfigForLog,
 } from '@/lib/mcp/merge-server-mcp-env';
 import {
-  collectAiSdkSseMcpTools,
-  filterToNonSseMcpServers,
+  collectAiSdkMcpTools,
+  filterToLegacyMcpServers,
 } from '@/lib/mcp/ai-sdk-mcp-tools';
 import {
   buildAgentCustomApiTools,
   redactAgentToolsForLog,
 } from '@/lib/ai/tools/agent-custom-api-tools';
+import { buildAgentComputerUseTools } from '@/lib/ai/tools/agent-computer-use-tools';
 import { z } from 'zod/v3';
 import { postRequestBodySchema, type PostRequestBody } from './schema';
 import { geolocation } from '@vercel/functions';
@@ -60,6 +71,192 @@ import type { ChatMessage } from '@/lib/types';
 
 export const maxDuration = 60;
 const DEBUG_OPENAI_COMPATIBLE = process.env.DEBUG_OPENAI_COMPATIBLE === 'true';
+/** Log each `streamText` chunk (text-delta, tool-call, etc.) to the server terminal. */
+const DEBUG_CHAT_STREAM_CHUNKS = process.env.DEBUG_CHAT_STREAM_CHUNKS === 'true';
+/** Log tool call lifecycle, passthrough executes, and tool-related stream chunks in POST /api/chat. */
+const DEBUG_CHAT_TOOLS = process.env.DEBUG_CHAT_TOOLS === 'true';
+/**
+ * In `next dev`, verbose tool logs are on unless `DEBUG_CHAT_TOOLS=false`.
+ * In production, only `DEBUG_CHAT_TOOLS=true` enables them.
+ */
+const CHAT_TOOLS_VERBOSE =
+  DEBUG_CHAT_TOOLS ||
+  (process.env.NODE_ENV === 'development' &&
+    process.env.DEBUG_CHAT_TOOLS !== 'false');
+
+function truncateForDebugLog(value: unknown, maxChars = 12000): string {
+  try {
+    const s =
+      typeof value === 'string' ? value : JSON.stringify(value, null, 2);
+    if (s.length <= maxChars) return s;
+    return `${s.slice(0, maxChars)}\n… [truncated ${s.length - maxChars} more chars]`;
+  } catch {
+    return String(value);
+  }
+}
+
+/** Aligns with `hasError` heuristics in components/tool-card.tsx for surfacing provider failures. */
+function toolOutputLooksProblematic(output: unknown): boolean {
+  if (output == null) return false;
+  if (typeof output !== 'object') return false;
+  const o = output as Record<string, unknown>;
+  if (o.isError === true) return true;
+  if (
+    'error' in o &&
+    o.error != null &&
+    String(o.error).trim() !== ''
+  ) {
+    return true;
+  }
+  const content = o.content;
+  if (Array.isArray(content)) {
+    return content.some(
+      (c: unknown) =>
+        c != null &&
+        typeof c === 'object' &&
+        (c as { type?: string; text?: string }).type === 'text' &&
+        typeof (c as { text?: string }).text === 'string' &&
+        (c as { text: string }).text.toLowerCase().includes('error'),
+    );
+  }
+  return false;
+}
+
+type AnthropicSkillConfig = {
+  type: 'anthropic';
+  skillId: string;
+  version?: string;
+};
+
+type AnthropicExtensionsConfig = {
+  enableCodeExecution: boolean;
+  container?: {
+    skills: AnthropicSkillConfig[];
+  };
+  betas?: string[];
+};
+
+const DEFAULT_ANTHROPIC_SKILLS: AnthropicSkillConfig[] = [
+  { type: 'anthropic', skillId: 'pptx', version: 'latest' },
+  { type: 'anthropic', skillId: 'docx', version: 'latest' },
+  { type: 'anthropic', skillId: 'pdf', version: 'latest' },
+  { type: 'anthropic', skillId: 'xlsx', version: 'latest' },
+];
+
+function parseCsvEnv(value: string | undefined): string[] {
+  if (!value) return [];
+  return value
+    .split(',')
+    .map((token) => token.trim())
+    .filter(Boolean);
+}
+
+function parseAnthropicSkillsEnv(value: string | undefined): AnthropicSkillConfig[] {
+  const skills: AnthropicSkillConfig[] = [];
+
+  for (const token of parseCsvEnv(value)) {
+    const [rawSkillId, rawVersion] = token.split('@');
+    const skillId = rawSkillId?.trim();
+    if (!skillId) continue;
+
+    const version = rawVersion?.trim();
+    skills.push({
+      type: 'anthropic',
+      skillId,
+      ...(version ? { version } : { version: 'latest' }),
+    });
+  }
+
+  return skills;
+}
+
+/**
+ * Enables Anthropic code execution + skills on the compatible API when:
+ * - the configured model id looks like Claude, or
+ * - the user picked the reasoning chat preset (`chat-model-reasoning`), which often maps to
+ *   Claude via env even when `REASONING_MODEL` omits the substring `claude`.
+ */
+function getAnthropicExtensionsForModel(
+  resolvedModelId: string,
+  selectedChatModel: string,
+): AnthropicExtensionsConfig | undefined {
+  const enableCodeExecution =
+    process.env.ANTHROPIC_ENABLE_CODE_EXECUTION !== 'false';
+  if (!enableCodeExecution) return undefined;
+
+  const isClaudeModel = resolvedModelId.toLowerCase().includes('claude');
+  const isReasoningChatPreset = selectedChatModel === 'chat-model-reasoning';
+  if (!isClaudeModel && !isReasoningChatPreset) return undefined;
+
+  const configuredSkills = parseAnthropicSkillsEnv(process.env.ANTHROPIC_SKILLS);
+  const skills =
+    configuredSkills.length > 0 ? configuredSkills : DEFAULT_ANTHROPIC_SKILLS;
+  const extraBetas = parseCsvEnv(process.env.ANTHROPIC_EXTENSION_BETAS);
+
+  return {
+    enableCodeExecution,
+    container: { skills },
+    ...(extraBetas.length > 0 ? { betas: extraBetas } : {}),
+  };
+}
+
+function isNativeFileSkillsRequest(
+  parts: Array<{ type: string; text?: string }>,
+): boolean {
+  const combinedText = parts
+    .filter((part) => part.type === 'text' && typeof part.text === 'string')
+    .map((part) => part.text ?? '')
+    .join(' ')
+    .toLowerCase();
+
+  if (!combinedText) return false;
+
+  const fileTypeRegex =
+    /\b(pdf|pptx|docx|xlsx|powerpoint|word document|excel|spreadsheet)\b/i;
+  const intentRegex = /\b(create|generate|make|build|export|produce)\b/i;
+
+  return fileTypeRegex.test(combinedText) && intentRegex.test(combinedText);
+}
+
+function createAnthropicSkillsPassthroughTools() {
+  const passthroughSchema = z.object({}).passthrough();
+
+  const passthroughExecute = async (args: unknown) => {
+    if (CHAT_TOOLS_VERBOSE) {
+      console.log('🔧 [chat-tools] anthropic passthrough execute (local SDK)', {
+        preview: truncateForDebugLog(args, 8000),
+      });
+    }
+    if (args && typeof args === 'object' && '_result' in (args as object)) {
+      return (args as { _result: unknown })._result;
+    }
+    return {
+      delegated: true,
+      note: 'Handled by Anthropic skills backend',
+      args,
+    };
+  };
+
+  return {
+    text_editor_code_execution: dynamicTool({
+      description:
+        'Anthropic text editor code execution passthrough (server-side execution).',
+      inputSchema: passthroughSchema,
+      execute: passthroughExecute,
+    }),
+    bash_code_execution: dynamicTool({
+      description:
+        'Anthropic bash code execution passthrough (server-side execution).',
+      inputSchema: passthroughSchema,
+      execute: passthroughExecute,
+    }),
+    code_execution: dynamicTool({
+      description: 'Anthropic code execution passthrough (server-side execution).',
+      inputSchema: passthroughSchema,
+      execute: passthroughExecute,
+    }),
+  } as const;
+}
 
 let globalStreamContext: ResumableStreamContext | null = null;
 
@@ -142,9 +339,17 @@ function jsonSchemaPropertyToZod(property: any): z.ZodTypeAny {
   }
 }
 
-/** AWS Bedrock Converse tool names: [a-zA-Z0-9_-]+, max 64, should start with a letter. */
-function sanitizeBedrockToolName(raw: string, used: Set<string>): string {
-  let s = raw.replace(/[^a-zA-Z0-9_-]/g, '_').replace(/_+/g, '_');
+/** Model-facing tool ids (strict providers, e.g. AWS Bedrock): [a-zA-Z0-9_-]+, max 64, start with a letter. */
+function sanitizeModelToolName(raw: string, used: Set<string>): string {
+  // MCP tools use `server__tool` (`collectAiSdkMcpTools`). Do not collapse `__` to `_` or the UI
+  // cannot tell MCP from agent API tools — sanitize each segment and rejoin.
+  const MCP_SEGMENT_JOIN = '__';
+  const segments = raw.split(MCP_SEGMENT_JOIN);
+  let s = segments
+    .map((segment) =>
+      segment.replace(/[^a-zA-Z0-9_-]/g, '_').replace(/_+/g, '_'),
+    )
+    .join(MCP_SEGMENT_JOIN);
   if (!/^[a-zA-Z]/.test(s)) {
     s = `t_${s}`;
   }
@@ -166,15 +371,21 @@ async function getMcpToolsForAI(
   agentMcpConfig?: any,
   agentKnowledgeBaseIds?: string[],
   agentToolsConfig?: unknown,
+  /** Per HTTP request: dedupe identical AI SDK MCP executes when the model retries with `{}`. */
+  mcpToolDedupeByInput?: Map<string, unknown>,
+  /** Chat id for E2B desktop session scoping (Frida `computer-use` tool). */
+  chatId?: string,
 ): Promise<{
   mcpTools: Record<string, any>;
   mcpActiveTools: string[];
   closeAiSdkMcpClients: () => Promise<void>;
+  computerUseRegistered: boolean;
 }> {
   const mcpTools: Record<string, any> = {};
   const mcpActiveTools: string[] = [];
-  const bedrockToolNames = new Set<string>();
+  const usedModelToolNames = new Set<string>();
   let closeAiSdkMcpClients: () => Promise<void> = async () => {};
+  let computerUseRegistered = false;
 
   try {
     const resolvedAgentMcp = applyServerMcpSecretsFromEnv(
@@ -196,11 +407,12 @@ async function getMcpToolsForAI(
       | Record<string, unknown>
       | undefined;
 
-    // SSE servers: @ai-sdk/mcp createMCPClient (https://ai-sdk.dev/docs/ai-sdk-core/mcp-tools)
-    const aiSdkResult = await collectAiSdkSseMcpTools(
+    // Remote MCP (sse / http): @ai-sdk/mcp createMCPClient (https://ai-sdk.dev/docs/ai-sdk-core/mcp-tools)
+    const aiSdkResult = await collectAiSdkMcpTools(
       mcpServersResolved,
-      sanitizeBedrockToolName,
-      bedrockToolNames,
+      sanitizeModelToolName,
+      usedModelToolNames,
+      mcpToolDedupeByInput,
     );
     Object.assign(mcpTools, aiSdkResult.mcpTools);
     mcpActiveTools.push(...aiSdkResult.mcpActiveTools);
@@ -214,17 +426,17 @@ async function getMcpToolsForAI(
       Object.keys(resolvedAgentMcp.mcpServers).length > 0;
 
     const legacyAgentMcpOnly = hasAgentMcpServers
-      ? { mcpServers: filterToNonSseMcpServers(mcpServersResolved) }
+      ? { mcpServers: filterToLegacyMcpServers(mcpServersResolved) }
       : undefined;
 
     // Initialize or merge when there are no connections yet, or when the loaded agent
     // defines MCP servers (must merge even if the user already had hub connections).
-    // Agent SSE entries are handled above via @ai-sdk/mcp; only stdio/non-SSE merge here.
+    // Agent sse/http entries are handled above via @ai-sdk/mcp; only stdio/legacy merge here.
     if (mcpClient.connections.length === 0 || hasAgentMcpServers) {
       console.log(
-        '🔧 Initializing legacy MCP client (stdio / hub, non-SSE agent entries):',
+        '🔧 Initializing legacy MCP client (stdio / hub, non-remote-AI-SDK agent entries):',
         hasAgentMcpServers
-          ? 'merging non-SSE agent mcpServers with user config'
+          ? 'merging legacy agent mcpServers with user config'
           : 'from user config only',
       );
       try {
@@ -292,9 +504,9 @@ async function getMcpToolsForAI(
 
       for (const mcpTool of server.tools) {
         const internalName = `${server.name}__${mcpTool.name}`;
-        const toolName = sanitizeBedrockToolName(
+        const toolName = sanitizeModelToolName(
           internalName,
-          bedrockToolNames,
+          usedModelToolNames,
         );
 
         // Convert JSON Schema to Zod schema for parameters
@@ -319,7 +531,7 @@ async function getMcpToolsForAI(
           inputSchema: parametersSchema,
           execute: async (args: any) => {
             console.log(
-              `🛠️ Executing MCP tool: ${internalName} (Bedrock name: ${toolName}) with args:`,
+              `🛠️ Executing MCP tool: ${internalName} (model tool name: ${toolName}) with args:`,
               args,
             );
             try {
@@ -346,11 +558,23 @@ async function getMcpToolsForAI(
 
     const customApi = buildAgentCustomApiTools(
       agentToolsConfig,
-      sanitizeBedrockToolName,
-      bedrockToolNames,
+      sanitizeModelToolName,
+      usedModelToolNames,
     );
     Object.assign(mcpTools, customApi.tools);
     mcpActiveTools.push(...customApi.activeNames);
+
+    if (chatId) {
+      const computerUse = buildAgentComputerUseTools(
+        agentToolsConfig,
+        chatId,
+        sanitizeModelToolName,
+        usedModelToolNames,
+      );
+      Object.assign(mcpTools, computerUse.tools);
+      mcpActiveTools.push(...computerUse.activeNames);
+      computerUseRegistered = computerUse.computerUseRegistered;
+    }
 
     // Add knowledge base search tool if agent has knowledge base IDs
     if (agentKnowledgeBaseIds && agentKnowledgeBaseIds.length > 0) {
@@ -368,13 +592,19 @@ async function getMcpToolsForAI(
     }
 
     console.log('🔧 All tools ready:', mcpActiveTools);
-    return { mcpTools, mcpActiveTools, closeAiSdkMcpClients };
+    return {
+      mcpTools,
+      mcpActiveTools,
+      closeAiSdkMcpClients,
+      computerUseRegistered,
+    };
   } catch (error) {
     console.error('❌ Failed to initialize tools:', error);
     return {
       mcpTools,
       mcpActiveTools,
       closeAiSdkMcpClients: async () => {},
+      computerUseRegistered: false,
     };
   }
 }
@@ -517,8 +747,12 @@ export async function POST(request: Request) {
 
     const messagesFromDb = await getMessagesByChatId({ id });
     const uiMessages = [...convertToUIMessages(messagesFromDb), message];
-    /** PDF `file` parts are unsupported by the OpenAI-compatible provider; expand to text. */
-    const uiMessagesForModel = await expandPdfFilePartsForModel(uiMessages);
+    /**
+     * The OpenAI-compatible provider rejects `file` parts for PDFs and OOXML
+     * office formats (pptx/docx/xlsx). Expand those server-side into bounded
+     * text parts; stored messages keep the original `file` parts for the UI.
+     */
+    const uiMessagesForModel = await expandFilePartsForModel(uiMessages);
 
     const { longitude, latitude, city, country } = geolocation(request);
 
@@ -545,60 +779,112 @@ export async function POST(request: Request) {
     const streamId = generateUUID();
     await createStreamId({ streamId, chatId: id });
 
+    const forceNativeFileSkills = isNativeFileSkillsRequest(
+      message.parts as Array<{ type: string; text?: string }>,
+    );
+
+    const mcpToolDedupeByInput = new Map<string, unknown>();
+
     // Get MCP tools + Agent Builder HTTP tools for this user
-    const { mcpTools, mcpActiveTools, closeAiSdkMcpClients } =
+    const { mcpTools, mcpActiveTools, closeAiSdkMcpClients, computerUseRegistered } =
       await getMcpToolsForAI(
         session.user.id,
         effectiveAgentMcpConfig,
         effectiveAgentKnowledgeBaseIds,
         effectiveAgentTools,
+        mcpToolDedupeByInput,
+        id,
       );
 
     const stream = createUIMessageStream({
       execute: async ({ writer: dataStream }) => {
-        const systemPromptText = systemPrompt({
+        const hasMcpToolsForRequest = mcpActiveTools.length > 0;
+
+        const resolvedModelId =
+          resolveConfiguredLanguageModelId(selectedChatModel);
+        const anthropicExtensions = getAnthropicExtensionsForModel(
+          resolvedModelId,
+          selectedChatModel,
+        );
+        const anthropicSkillIds =
+          anthropicExtensions?.container?.skills.map((skill) => skill.skillId) ?? [];
+        const useNativeFileSkillsMode =
+          forceNativeFileSkills && !!anthropicExtensions;
+
+        const openaiCompatibleProviderOptions: {
+          user?: string;
+          reasoningEffort?: 'medium';
+          anthropicExtensions?: AnthropicExtensionsConfig;
+        } = {};
+
+        if (selectedChatModel === 'chat-model-reasoning') {
+          openaiCompatibleProviderOptions.user = session.user.id;
+          // High reasoning + tools has caused empty streams on some gateways. We always register
+          // built-in tools (createDocument, createMermaidDiagram, etc.); medium keeps tool calls
+          // reliable. High effort without MCP was skewing toward prose-only answers after "thinking".
+          openaiCompatibleProviderOptions.reasoningEffort = 'medium';
+        }
+
+        if (anthropicExtensions) {
+          openaiCompatibleProviderOptions.anthropicExtensions = anthropicExtensions;
+        }
+
+        const providerOptions =
+          Object.keys(openaiCompatibleProviderOptions).length > 0
+            ? {
+                openaiCompatible: openaiCompatibleProviderOptions,
+              }
+            : undefined;
+
+        const systemPromptSections = buildSystemPromptSections({
           selectedChatModel,
           requestHints,
           agentSystemPrompt: effectiveAgentSystemPrompt,
           agentResponsibilities: effectiveAgentResponsibilities,
           agentKnowledgeBaseIds: effectiveAgentKnowledgeBaseIds,
           mcpToolNames: mcpActiveTools,
+          anthropicSkillsEnabled: !!anthropicExtensions,
+          anthropicSkills: anthropicSkillIds,
+          forceNativeFileSkills: useNativeFileSkillsMode,
+          desktopComputerUseEnabled: computerUseRegistered,
         });
 
-        console.log('🔧 System Prompt:', systemPromptText);
+        const systemPromptText = buildEffectiveSystemPrompt({
+          overrideSystemPrompt: process.env.SYSTEM_PROMPT_OVERRIDE,
+          appendSystemPrompt: process.env.SYSTEM_PROMPT_APPEND,
+          build: () => joinSystemPromptSections(systemPromptSections),
+        });
 
-        const hasMcpToolsForRequest = mcpActiveTools.length > 0;
-
-        const reasoningProviderOptions =
-          selectedChatModel === 'chat-model-reasoning'
-            ? {
-                // OpenAI-compatible provider options must be sent under provider name.
-                openaiCompatible: {
-                  user: session.user.id,
-                  // High reasoning + tools has caused empty streams on some gateways. We always register
-                  // built-in tools (createDocument, createMermaidDiagram, etc.); medium keeps tool calls
-                  // reliable. High effort without MCP was skewing toward prose-only answers after "thinking".
-                  reasoningEffort: 'medium' as const,
-                },
-              }
-            : undefined;
+        if (process.env.DEBUG_SYSTEM_PROMPT === 'true') {
+          console.log(dumpSystemPrompt(systemPromptSections));
+          console.log('🔧 System Prompt (resolved):', systemPromptText);
+        }
 
         // Same ToolSet as `streamText` so `convertToModelMessages` can serialize
-        // prior turns' tool outputs (especially dynamic MCP tools) for Bedrock/core.
-        const toolsForModel = {
+        // prior turns' tool outputs (especially dynamic MCP tools) for the model/core.
+        const toolsForModel: Record<string, any> = {
           getWeather,
-          createDocument: createDocument({ session, dataStream }),
-          updateDocument: updateDocument({ session, dataStream }),
-          requestSuggestions: requestSuggestions({
-            session,
-            dataStream,
-          }),
-          createIshikawaDiagram: createIshikawaDiagram({ session, dataStream }),
-          createMermaidDiagram: createMermaidDiagram({ session, dataStream }),
           updateAgentTasks,
           renderHostMap,
           ...mcpTools,
         };
+
+        // Always register Anthropic code-execution passthrough tools so the model/gateway never
+        // sees "unavailable tool" for these ids (multi-turn + strict activeTools).
+        Object.assign(toolsForModel, createAnthropicSkillsPassthroughTools());
+
+        if (!useNativeFileSkillsMode) {
+          Object.assign(toolsForModel, {
+            createDocument: createDocument({ session, dataStream }),
+            updateDocument: updateDocument({ session, dataStream }),
+            requestSuggestions: requestSuggestions({
+              session,
+              dataStream,
+            }),
+            createIshikawaDiagram: createIshikawaDiagram({ session, dataStream }),
+            createMermaidDiagram: createMermaidDiagram({ session, dataStream }),
+          });
+        }
 
         if (DEBUG_OPENAI_COMPATIBLE) {
           const latestMessage = uiMessagesForModel.at(-1);
@@ -607,7 +893,7 @@ export async function POST(request: Request) {
             JSON.stringify(
               {
                 selectedChatModel,
-                providerOptions: reasoningProviderOptions,
+                providerOptions,
                 toolCount: Object.keys(toolsForModel).length,
                 latestMessage: latestMessage
                   ? {
@@ -629,15 +915,177 @@ export async function POST(request: Request) {
           messages: await convertToModelMessages(uiMessagesForModel, {
             tools: toolsForModel,
           }),
-          providerOptions: reasoningProviderOptions,
+          providerOptions,
+          experimental_repairToolCall:
+            hasMcpToolsForRequest ? createMcpToolCallRepair() : undefined,
           // Keep raw provider chunk boundaries so json-render SpecStream (JSONL patches)
           // can flush progressively without word-level buffering/rechunking.
           // Tool call + optional follow-up text needs more than one step
-          stopWhen: stepCountIs(hasMcpToolsForRequest ? 12 : 5),
+          stopWhen: stepCountIs(
+            computerUseRegistered ? 18 : hasMcpToolsForRequest ? 12 : 5,
+          ),
           // Explicit auto whenever tools exist (built-ins are always present); undefined matched some
           // gateways poorly vs MCP-only turns that passed 'auto'.
           toolChoice: 'auto',
-          onFinish: async () => {
+          onChunk: ({ chunk }) => {
+            if (chunk.type === 'tool-result') {
+              const tr = chunk as { toolName?: string; toolCallId?: string; output?: unknown };
+              if (toolOutputLooksProblematic(tr.output)) {
+                console.warn('⚠️ [chat-tools] stream tool-result looks like failure', {
+                  toolName: tr.toolName,
+                  toolCallId: tr.toolCallId,
+                  outputPreview: truncateForDebugLog(tr.output, 8000),
+                });
+              }
+            }
+            if (CHAT_TOOLS_VERBOSE) {
+              const t = chunk.type;
+              if (
+                t === 'tool-call' ||
+                t === 'tool-input-start' ||
+                t === 'tool-input-delta' ||
+                t === 'tool-result' ||
+                t === 'raw'
+              ) {
+                console.log('🔧 [chat-tools] stream chunk', {
+                  type: t,
+                  preview: truncateForDebugLog(chunk, 16000),
+                });
+              }
+            }
+            if (DEBUG_CHAT_STREAM_CHUNKS) {
+              if (chunk.type === 'text-delta') {
+                const text =
+                  'text' in chunk && typeof chunk.text === 'string'
+                    ? chunk.text
+                    : '';
+                console.log('🔍 [chat-stream-chunk]', {
+                  type: chunk.type,
+                  textPreview: text.slice(0, 160),
+                });
+              } else if (chunk.type === 'reasoning-delta') {
+                const text =
+                  'text' in chunk && typeof chunk.text === 'string'
+                    ? chunk.text
+                    : '';
+                console.log('🔍 [chat-stream-chunk]', {
+                  type: chunk.type,
+                  textPreview: text.slice(0, 160),
+                });
+              } else {
+                console.log('🔍 [chat-stream-chunk]', chunk);
+              }
+            }
+          },
+          ...(CHAT_TOOLS_VERBOSE
+            ? {
+                onError: ({ error }: { error: unknown }) => {
+                  console.error('🔧 [chat-tools] streamText error', error);
+                },
+                experimental_onToolCallStart: ({
+                  toolCall,
+                  stepNumber,
+                }: {
+                  toolCall: {
+                    toolName: string;
+                    toolCallId: string;
+                    providerExecuted?: boolean;
+                    input?: unknown;
+                  };
+                  stepNumber: number | undefined;
+                }) => {
+                  console.log('🔧 [chat-tools] onToolCallStart', {
+                    stepNumber,
+                    toolName: toolCall.toolName,
+                    toolCallId: toolCall.toolCallId,
+                    providerExecuted: toolCall.providerExecuted,
+                    inputPreview: truncateForDebugLog(
+                      'input' in toolCall ? toolCall.input : toolCall,
+                      8000,
+                    ),
+                  });
+                },
+                experimental_onToolCallFinish: (
+                  event:
+                    | {
+                        success: true;
+                        toolCall: { toolName: string; toolCallId: string };
+                        durationMs: number;
+                        stepNumber: number | undefined;
+                        output: unknown;
+                      }
+                    | {
+                        success: false;
+                        toolCall: { toolName: string; toolCallId: string };
+                        durationMs: number;
+                        stepNumber: number | undefined;
+                        error: unknown;
+                      },
+                ) => {
+                  const base = {
+                    stepNumber: event.stepNumber,
+                    toolName: event.toolCall.toolName,
+                    toolCallId: event.toolCall.toolCallId,
+                    durationMs: event.durationMs,
+                  };
+                  if (event.success) {
+                    console.log('🔧 [chat-tools] onToolCallFinish ok', {
+                      ...base,
+                      outputPreview: truncateForDebugLog(event.output, 12000),
+                    });
+                  } else {
+                    console.log('🔧 [chat-tools] onToolCallFinish error', {
+                      ...base,
+                      error: truncateForDebugLog(event.error, 8000),
+                    });
+                  }
+                },
+                onStepFinish: (step: {
+                  finishReason: string;
+                  toolCalls: Array<{ toolName: string; toolCallId: string }>;
+                  toolResults: Array<{
+                    toolName: string;
+                    toolCallId: string;
+                    output: unknown;
+                  }>;
+                }) => {
+                  console.log('🔧 [chat-tools] onStepFinish', {
+                    finishReason: step.finishReason,
+                    toolCalls: step.toolCalls.map((tc) => ({
+                      name: tc.toolName,
+                      id: tc.toolCallId,
+                    })),
+                    toolResults: step.toolResults.map((tr) => ({
+                      toolName: tr.toolName,
+                      toolCallId: tr.toolCallId,
+                      outputPreview: truncateForDebugLog(tr.output, 8000),
+                    })),
+                  });
+                },
+              }
+            : {}),
+          onFinish: async (event) => {
+            for (const step of event.steps) {
+              if (step.finishReason === 'error') {
+                console.warn('⚠️ [chat-tools] step finishReason=error', {
+                  stepNumber: step.stepNumber,
+                  textPreview: step.text?.slice(0, 500),
+                });
+              }
+              for (const tr of step.toolResults) {
+                if (toolOutputLooksProblematic(tr.output)) {
+                  console.warn(
+                    '⚠️ [chat-tools] tool result flagged as failure (provider / gateway)',
+                    {
+                      stepNumber: step.stepNumber,
+                      toolName: tr.toolName,
+                      toolCallId: tr.toolCallId,
+                      outputPreview: truncateForDebugLog(tr.output, 8000),
+                    },
+                  );
+                }
+              }
+            }
             await closeAiSdkMcpClients();
           },
 
@@ -645,11 +1093,18 @@ export async function POST(request: Request) {
           // work when using chat-model-reasoning (default). MCP tools stay appended.
           activeTools: [
             'getWeather',
-            'createDocument',
-            'updateDocument',
-            'requestSuggestions',
-            'createIshikawaDiagram',
-            'createMermaidDiagram',
+            ...(useNativeFileSkillsMode
+              ? []
+              : [
+                  'createDocument',
+                  'updateDocument',
+                  'requestSuggestions',
+                  'createIshikawaDiagram',
+                  'createMermaidDiagram',
+                ]),
+            'text_editor_code_execution',
+            'bash_code_execution',
+            'code_execution',
             'updateAgentTasks',
             'renderHostMap',
             ...mcpActiveTools,

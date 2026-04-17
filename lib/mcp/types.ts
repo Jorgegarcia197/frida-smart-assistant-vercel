@@ -2,6 +2,7 @@
 import type { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import type { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js";
 import type { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
+import type { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 
 // Types
 import type { McpServerConfig } from "./client";
@@ -9,6 +10,13 @@ import type { McpServerConfig } from "./client";
 export const DEFAULT_MCP_TIMEOUT_SECONDS = 60; // matches Anthropic's default timeout in their MCP SDK
 export const MIN_MCP_TIMEOUT_SECONDS = 1;
 export type McpMode = "full" | "server-use-only" | "off";
+
+/**
+ * Logical transport for MCP server entries (agent + user hub).
+ * - `sse` / `http`: remote URL — `@ai-sdk/mcp` uses `transport.type`; legacy `MCPClient` uses SSE or Streamable HTTP from the MCP SDK.
+ * - `stdio`: local process — legacy `MCPClient` only.
+ */
+export type McpTransportType = "sse" | "http" | "stdio";
 
 export type McpServer = {
 	name: string;
@@ -79,5 +87,8 @@ export type McpToolCallResponse = {
 export type McpConnection = {
 	server: McpServer;
 	client: Client;
-	transport: StdioClientTransport | SSEClientTransport;
+	transport:
+		| StdioClientTransport
+		| SSEClientTransport
+		| StreamableHTTPClientTransport;
 };

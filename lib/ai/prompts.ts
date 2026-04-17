@@ -35,7 +35,7 @@ CODE AND CHAT (critical — follow on every programming task):
 
 DIAGRAMS, UML, AND VISUAL FLOWS (critical):
 - When the user asks for a **diagram**, **UML** (any kind), **flowchart**, **sequence diagram**, **auth/login flow**, **architecture diagram**, **ER**, or similar: you MUST open the artifact panel using \`createMermaidDiagram\` (set \`type\` to the closest match: e.g. \`sequence\` for request/response flows, \`flowchart\` for processes, \`class\` for class-style UML, \`entity-relationship\` for ER) **or** \`createDocument\` with \`kind: "mermaid"\`. Mermaid can express UML-like diagrams (e.g. \`sequenceDiagram\`, \`classDiagram\`).
-- If the user asks for an **Ishikawa**, **fishbone**, **cause-and-effect**, or **root-cause analysis** diagram, call \`createIshikawaDiagram\`. Provide: concise \`title\`, clear \`problem\`, and either explicit \`categories\` with causes or a suitable default framework (\`6M\`, \`8P\`, or \`software\`). Use \`language: "es"\` when the user is writing in Spanish.
+- If the user asks for an **Ishikawa**, **fishbone**, **cause-and-effect**, or **root-cause analysis** diagram, call \`createIshikawaDiagram\` **exactly once**. Provide: concise \`title\`, clear \`problem\`, and either explicit \`categories\` with causes or a suitable default framework (\`6M\`, \`8P\`, or \`software\`). Use \`language: "es"\` when the user is writing in Spanish. Use data already available in this conversation—do not call MCP tools just to generate a diagram unless the user explicitly asks for live data in it.
 - Do **not** claim that UML or diagrams are unsupported, or that you can only describe them in chat. Do **not** satisfy a diagram request with prose alone unless the user explicitly asked for text-only.
 - In chat you may give a **short** intro (1–3 sentences); the diagram is produced in the artifact.
 
@@ -84,72 +84,285 @@ About the origin of user's request:
 - country: ${requestHints.country}
 `;
 
-export const systemPrompt = ({
+export interface SystemPromptInput {
+  selectedChatModel: string;
+  requestHints: RequestHints;
+  agentSystemPrompt?: string;
+  agentResponsibilities?: string[];
+  agentKnowledgeBaseIds?: string[];
+  /** MCP + Agent Builder HTTP tools (sanitized model-facing tool names). */
+  mcpToolNames?: string[];
+  /** True when OpenAI-compatible backend will inject Anthropic skills/tools. */
+  anthropicSkillsEnabled?: boolean;
+  /** Friendly list of enabled skill IDs, e.g. ['pdf', 'pptx']. */
+  anthropicSkills?: string[];
+  /** Enable strict mode that forbids artifact fallback for native file requests. */
+  forceNativeFileSkills?: boolean;
+  /** Frida agent has `computer-use` enabled and E2B desktop tool is registered. */
+  desktopComputerUseEnabled?: boolean;
+}
+
+/**
+ * A single named chunk of the system prompt. Mirrors the Claude Code pattern
+ * (`src/constants/prompts.ts`): every block is addressable by id, labeled
+ * `static` (product-stable, cache-friendly) or `dynamic` (per-session/agent),
+ * so callers can reorder, omit, or move pieces across a cache boundary.
+ */
+export interface SystemPromptSection {
+  id: string;
+  kind: 'static' | 'dynamic';
+  content: string;
+}
+
+/**
+ * Literal marker separating static (globally cache-scoped) content from
+ * dynamic (session-scoped) content. Matches the semantics of Claude Code's
+ * `__SYSTEM_PROMPT_DYNAMIC_BOUNDARY__`: it is a processing hint, not something
+ * you want to stream to the model, so `joinSystemPromptSections` only emits it
+ * when `includeBoundary: true` is requested.
+ */
+export const SYSTEM_PROMPT_DYNAMIC_BOUNDARY =
+  '__SYSTEM_PROMPT_DYNAMIC_BOUNDARY__';
+
+/**
+ * Build the ordered list of named system-prompt sections. Intended as the
+ * single source of truth for what goes into the system prompt and in what
+ * order; `systemPrompt()` is a thin wrapper around this plus a join.
+ */
+export const buildSystemPromptSections = ({
   selectedChatModel,
   requestHints,
   agentSystemPrompt,
   agentResponsibilities,
   agentKnowledgeBaseIds,
   mcpToolNames,
-}: {
-  selectedChatModel: string;
-  requestHints: RequestHints;
-  agentSystemPrompt?: string;
-  agentResponsibilities?: string[];
-  agentKnowledgeBaseIds?: string[];
-  /** MCP + Agent Builder HTTP tools (Bedrock-safe names). */
-  mcpToolNames?: string[];
-}) => {
+  anthropicSkillsEnabled,
+  anthropicSkills,
+  forceNativeFileSkills,
+  desktopComputerUseEnabled,
+}: SystemPromptInput): SystemPromptSection[] => {
   const requestPrompt = getRequestPromptFromHints(requestHints);
-  console.log('🔧 Request Prompt:', requestPrompt);
 
-  // Use agent system prompt if provided, otherwise use regular prompt
   const basePrompt = agentSystemPrompt || regularPrompt;
-  console.log('🔧 Base Prompt:', basePrompt);
 
-  // Add responsibilities if provided
   const responsibilitiesSection =
     agentResponsibilities && agentResponsibilities.length > 0
-      ? `\n\nResponsibilities:\n${agentResponsibilities.map((r) => `- ${r}`).join('\n')}`
+      ? `Responsibilities:\n${agentResponsibilities.map((r) => `- ${r}`).join('\n')}`
       : '';
 
-  // Add knowledge base search capability if agent has knowledge base IDs
   const knowledgeBaseSection =
     agentKnowledgeBaseIds && agentKnowledgeBaseIds.length > 0
-      ? `\n\nKnowledge Base Access:\nYou have access to search through ${agentKnowledgeBaseIds.length} knowledge base(s) for this agent. Use the \`knowledge_base_search\` tool to search for relevant information from the agent's knowledge bases when users ask questions that might benefit from specific documentation or knowledge.\n\nKnowledge Base IDs: ${agentKnowledgeBaseIds.join(', ')}`
+      ? `Knowledge Base Access:\nYou have access to search through ${agentKnowledgeBaseIds.length} knowledge base(s) for this agent. Use the \`knowledge_base_search\` tool to search for relevant information from the agent's knowledge bases when users ask questions that might benefit from specific documentation or knowledge.\n\nKnowledge Base IDs: ${agentKnowledgeBaseIds.join(', ')}`
       : '';
-
-  console.log('🔧 Responsibilities Section:', responsibilitiesSection);
-  console.log('🔧 Knowledge Base Section:', knowledgeBaseSection);
 
   const mcpHasSqlTool =
     mcpToolNames?.some((n) =>
       /execute_query|run_query|query_sql|sql_query/i.test(n),
     ) ?? false;
 
-  const mcpSqlHints = mcpHasSqlTool
-    ? `\n\nMCP SQL / database tools:
-- Every tool call MUST satisfy the tool schema: include every required property with real values (e.g. a non-empty SQL string in \`query\`). Never call SQL execution tools with an empty argument object.
-- Use valid SQL: \`CASE\` expressions need \`THEN\` (and usually \`ELSE\`). Example counts: \`COUNT(CASE WHEN condition THEN 1 END)\` or \`SUM(CASE WHEN condition THEN 1 ELSE 0 END)\`. Invalid: \`CASE WHEN col = 1 END\` with no \`THEN\`.`
-    : '';
+  const mcpHasTableSchemaTool =
+    mcpToolNames?.some((n) => /describe_table|table_schema|list_columns/i.test(n)) ??
+    false;
+
+  const mcpListTablesName = mcpToolNames?.find((n) => /list_tables/i.test(n));
+  const mcpDescribeTableName = mcpToolNames?.find((n) =>
+    /describe_table/i.test(n),
+  );
+  const mcpExecuteQueryName = mcpToolNames?.find((n) =>
+    /execute_query|run_query|query_sql|sql_query/i.test(n),
+  );
+
+  /** Bridges agent prose ("call describe_table") with actual registered tool ids (e.g. northwindmcp_describe_table). */
+  const mcpSqlRuntimeNames =
+    mcpHasSqlTool || mcpHasTableSchemaTool
+      ? `\n- **Runtime tool ids:** The tools available to you use **prefixed names** from the list above (e.g. \`${mcpDescribeTableName ?? '…_describe_table'}\`), not the short names in examples elsewhere. Call the **exact** id from the list with a full JSON object.${
+          mcpDescribeTableName
+            ? `\n- **${mcpDescribeTableName}:** pass a table identifier from \`${mcpListTablesName ?? '…_list_tables'}\`, e.g. \`{"table_name":"public.orders"}\` or \`{"table":"public.orders"}\`. **Never** call with \`{}\`.`
+            : ''
+        }${
+          mcpExecuteQueryName
+            ? `\n- **${mcpExecuteQueryName}:** pass SQL in \`query\`, e.g. \`{"query":"SELECT 1"}\`. **Never** call with \`{}\`.`
+            : ''
+        }${
+          mcpListTablesName
+            ? `\n- **${mcpListTablesName}:** may use \`{}\` only if the tool schema allows it.`
+            : ''
+        }`
+      : '';
+
+  const mcpCheckMkHint =
+    mcpToolNames?.some((n) => /CheckMK/i.test(n)) ?? false
+      ? `\n**CheckMK:** Use the CheckMK / ROLE instructions from your **agent system prompt** for jsonquery shapes, parameter names (\`query\`, \`jsonquery_string\`, etc.), filters (\`host_name\`, \`host_tag_values\`, \`tag_values\`, \`display_name\`), state codes, and validation rules. The app does not substitute different filter logic here—match the agent prompt and each tool’s schema.`
+      : '';
+
+  const mcpSqlHints =
+    mcpHasSqlTool || mcpHasTableSchemaTool
+      ? `\n\nMCP SQL / database tools:
+- Every tool call MUST satisfy the tool schema: include every required property with real values.${
+          mcpHasSqlTool
+            ? ` For query tools, use a non-empty SQL string in \`query\`. Never call SQL execution tools with an empty argument object.`
+            : ''
+        }${
+          mcpHasTableSchemaTool
+            ? ` If a tool requires \`table_name\`, pass a non-empty string from \`list_tables\` (shape as the tool expects, e.g. \`"public.orders"\`). Never call describe/schema tools with \`{}\`.`
+            : ''
+        }${mcpSqlRuntimeNames}${
+          mcpHasSqlTool
+            ? `\n- Use valid SQL: \`CASE\` expressions need \`THEN\` (and usually \`ELSE\`). Example counts: \`COUNT(CASE WHEN condition THEN 1 END)\` or \`SUM(CASE WHEN condition THEN 1 ELSE 0 END)\`. Invalid: \`CASE WHEN col = 1 END\` with no \`THEN\`.`
+            : ''
+        }`
+      : '';
 
   const mcpToolsSection =
     mcpToolNames && mcpToolNames.length > 0
-      ? `\n\nConnected tools (MCP and/or HTTP APIs) — you MUST call them for any question that needs live data, database queries, inventory, customers, revenue, products, external APIs, or schemas. Do not say you lack access; use the tools first, then answer from the results.\nWhen the user asks to chart or visualize data from an earlier turn, reuse the tool results already in this conversation or call the tools again if the numbers are missing.\n${mcpToolNames.map((n) => `- \`${n}\``).join('\n')}${mcpSqlHints}`
+      ? `Connected tools (MCP and/or HTTP APIs) — you MUST call them for any question that needs live data, database queries, inventory, customers, revenue, products, external APIs, or schemas. Do not say you lack access; use the tools first, then answer from the results.\nWhen the user asks to chart, visualize, or generate a diagram from data in an earlier turn, reuse the tool results already in this conversation — do NOT call MCP tools again just to produce a diagram or chart.\nFor every tool call, the \`arguments\` JSON must satisfy the tool schema (include every required field with real values). Never send an empty object \`{}\` or use template placeholder strings like \`<HOSTNAME>\`, \`<TAG_VALUE>\`, \`<SERVICE_NAME>\` — replace every placeholder with the actual value from context. Never call the same tool with the same arguments twice in one turn.${mcpCheckMkHint}\n${mcpToolNames.map((n) => `- \`${n}\``).join('\n')}${mcpSqlHints}`
       : '';
 
-  const tasksSection = `\n\nTask Progress UI:\nFor multi-step work, call \`updateAgentTasks\` with a short title and ordered task items using statuses: pending, in_progress, completed, or failed. Keep the checklist concise and update it when progress changes.`;
+  const anthropicSkillsSection = anthropicSkillsEnabled
+    ? `Anthropic built-in file skills are available in this chat (via backend):
+- Available skills: ${(anthropicSkills && anthropicSkills.length > 0 ? anthropicSkills : ['pptx', 'docx', 'pdf', 'xlsx']).map((s) => `\`${s}\``).join(', ')}.
+- For requests that explicitly ask for native files such as PDF, PPTX, DOCX, or XLSX, you MUST use those built-in skills via code execution and produce the requested file.
+- Do NOT say these formats are unsupported and do NOT fall back to only \`createDocument\` HTML/Markdown artifacts when the user asked for a real file.
+- Prefer returning a generated downloadable file (via tool results / file IDs), then summarize what was created in chat.
+- **Single successful output (critical — avoids wasted tokens):** For one user request that asks for **one** deliverable file (e.g. one summary deck, one PDF), run code execution / bash **only until that file is successfully returned** in tool results, then **stop**. Do **not** re-run bash or code execution to export the **same** content again under another filename (e.g. \`1.pptx\`, \`2.pptx\`, copies "to verify", or duplicate saves). Do not chain extra tool rounds after success. Only run again if the **first** attempt **failed** with an error, or the user explicitly asked for **multiple distinct** files or a **revision** after feedback.`
+    : '';
 
-  const genUiSection = `\n\n${generativeUiPromptSection}`;
+  const nativeFileModeSection = forceNativeFileSkills
+    ? `Native file mode (strict):
+- This specific request requires a real downloadable file (not an artifact fallback).
+- Forbidden for this turn: \`createDocument\` / \`updateDocument\` as a replacement for PDF/PPTX/DOCX/XLSX output.
+- You must complete the request through Anthropic file skills + code execution and return file output.
+- After one successful file appears in tool results for this request, **do not** re-execute to produce duplicate copies of the same file.`
+    : '';
+
+  const desktopComputerUseSection = desktopComputerUseEnabled
+    ? `E2B desktop (computer use):
+- You have a tool that controls an **isolated Linux desktop VM in the cloud** (E2B), not the user's local machine. Use \`screenshot\` to see the UI; coordinates are in pixels for that display.
+- Prefer short plans: screenshot → act → screenshot when the task needs visual feedback. Do not assume access to private user files or accounts on their PC.
+- Shell commands run inside the sandbox only (\`run_command\`).`
+    : '';
+
+  const tasksSection = `Task Progress UI:\nFor multi-step work, call \`updateAgentTasks\` with a short title and ordered task items using statuses: pending, in_progress, completed, or failed. Keep the checklist concise and update it when progress changes.`;
 
   const reasoningModelSection =
     selectedChatModel === 'chat-model-reasoning'
-      ? `\n\nReasoning + tools:\nInternal reasoning is for planning only. When the rules above require \`createDocument\`, \`createMermaidDiagram\`, \`createIshikawaDiagram\`, \`updateDocument\`, MCP tools, or other registered tools, you must still **call those tools** in this turn—do not answer with reasoning plus prose alone when a tool is required.`
+      ? `Reasoning + tools:\nInternal reasoning is for planning only. When the rules above require \`createDocument\`, \`createMermaidDiagram\`, \`createIshikawaDiagram\`, \`updateDocument\`, MCP tools,${
+          desktopComputerUseEnabled ? ' E2B desktop computer-use,' : ''
+        } or other registered tools, you must still **call those tools** in this turn—do not answer with reasoning plus prose alone when a tool is required.`
       : '';
 
   // Artifacts + createDocument must apply to every chat model (including reasoning);
   // otherwise the model streams long documents as fenced blocks and the artifact panel stays empty.
-  return `${basePrompt}${responsibilitiesSection}${knowledgeBaseSection}${mcpToolsSection}${tasksSection}${genUiSection}${reasoningModelSection}\n\n${requestPrompt}\n\n${artifactsPrompt}`;
+  const artifactsSection = forceNativeFileSkills ? '' : artifactsPrompt;
+
+  return [
+    { id: 'base', kind: 'static', content: basePrompt },
+    { id: 'responsibilities', kind: 'dynamic', content: responsibilitiesSection },
+    { id: 'knowledgeBase', kind: 'dynamic', content: knowledgeBaseSection },
+    { id: 'mcpTools', kind: 'dynamic', content: mcpToolsSection },
+    { id: 'anthropicSkills', kind: 'dynamic', content: anthropicSkillsSection },
+    { id: 'nativeFileMode', kind: 'dynamic', content: nativeFileModeSection },
+    { id: 'desktopComputerUse', kind: 'dynamic', content: desktopComputerUseSection },
+    { id: 'tasks', kind: 'static', content: tasksSection },
+    { id: 'generativeUi', kind: 'static', content: generativeUiPromptSection },
+    { id: 'reasoningModel', kind: 'dynamic', content: reasoningModelSection },
+    { id: 'requestInfo', kind: 'dynamic', content: requestPrompt },
+    { id: 'artifacts', kind: 'static', content: artifactsSection },
+  ];
+};
+
+/**
+ * Join ordered sections into the final string sent to the model. Empty
+ * sections are dropped. When `includeBoundary` is true, a literal marker
+ * separates the trailing static run from the first dynamic section — useful
+ * for callers that want to split static (cacheable) and dynamic content for
+ * a provider that supports prefix caching.
+ *
+ * Most callers should leave `includeBoundary` false; the marker is a
+ * processing hint and should not reach the model verbatim.
+ */
+export const joinSystemPromptSections = (
+  sections: SystemPromptSection[],
+  { includeBoundary = false }: { includeBoundary?: boolean } = {},
+): string => {
+  if (!includeBoundary) {
+    return sections
+      .map((section) => section.content)
+      .filter((content) => content.length > 0)
+      .join('\n\n');
+  }
+
+  const staticPrefix: string[] = [];
+  const dynamicSuffix: string[] = [];
+  let seenDynamic = false;
+
+  for (const section of sections) {
+    if (!section.content) continue;
+    if (section.kind === 'dynamic') seenDynamic = true;
+    (seenDynamic ? dynamicSuffix : staticPrefix).push(section.content);
+  }
+
+  if (!seenDynamic) return staticPrefix.join('\n\n');
+
+  return [
+    staticPrefix.join('\n\n'),
+    SYSTEM_PROMPT_DYNAMIC_BOUNDARY,
+    dynamicSuffix.join('\n\n'),
+  ]
+    .filter((chunk) => chunk.length > 0)
+    .join('\n\n');
+};
+
+export const systemPrompt = (input: SystemPromptInput): string =>
+  joinSystemPromptSections(buildSystemPromptSections(input));
+
+/**
+ * Priority-based resolver inspired by Claude Code's `buildEffectiveSystemPrompt`.
+ * When `overrideSystemPrompt` is set, it replaces everything; otherwise the
+ * default builder runs and `appendSystemPrompt` (if any) is concatenated last.
+ * Keeps a single, testable place for prompt precedence decisions so new
+ * override sources (coordinator modes, eval harnesses, etc.) plug in cleanly.
+ */
+export const buildEffectiveSystemPrompt = ({
+  overrideSystemPrompt,
+  appendSystemPrompt,
+  build,
+}: {
+  overrideSystemPrompt?: string;
+  appendSystemPrompt?: string;
+  build: () => string;
+}): string => {
+  const base = overrideSystemPrompt?.trim()
+    ? overrideSystemPrompt
+    : build();
+  const append = appendSystemPrompt?.trim();
+  return append ? `${base}\n\n${append}` : base;
+};
+
+/**
+ * Render a human-readable report of the resolved sections (id, kind, char
+ * count, short preview). Intended for dev-time debugging and eval dumps;
+ * redacts a few obvious secret shapes so logs are safer to paste into
+ * tickets. Not meant for production logging.
+ */
+export const dumpSystemPrompt = (
+  sections: SystemPromptSection[],
+  { previewChars = 160 }: { previewChars?: number } = {},
+): string => {
+  const redact = (value: string) =>
+    value
+      .replace(/(Bearer\s+)[A-Za-z0-9._\-]+/gi, '$1<REDACTED>')
+      .replace(/(sk-[A-Za-z0-9]{6})[A-Za-z0-9]+/g, '$1…<REDACTED>')
+      .replace(/([A-Za-z0-9_-]*(?:api|secret|token|password)[A-Za-z0-9_-]*\s*[:=]\s*)["']?[A-Za-z0-9._\-]{8,}["']?/gi, '$1<REDACTED>');
+
+  const lines = sections.map((section) => {
+    const collapsed = section.content.replace(/\s+/g, ' ').trim();
+    const preview = redact(collapsed).slice(0, previewChars);
+    const suffix = collapsed.length > previewChars ? '…' : '';
+    return `  - [${section.kind}] ${section.id} (${section.content.length} chars): ${preview}${suffix}`;
+  });
+
+  return ['System prompt sections:', ...lines].join('\n');
 };
 
 export const codePrompt = `

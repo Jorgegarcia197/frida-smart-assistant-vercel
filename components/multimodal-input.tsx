@@ -7,6 +7,7 @@ import {
   useEffect,
   useState,
   useCallback,
+  type ClipboardEvent,
   type Dispatch,
   type SetStateAction,
   type ChangeEvent,
@@ -164,7 +165,9 @@ function PureMultimodalInput({
     width,
   ]);
 
-  const uploadFile = async (file: File) => {
+  const isModelBusy = status === 'submitted' || status === 'streaming';
+
+  const uploadFile = useCallback(async (file: File) => {
     const formData = new FormData();
     formData.append('file', file);
 
@@ -189,16 +192,30 @@ function PureMultimodalInput({
     } catch (error) {
       toast.error('Failed to upload file, please try again!');
     }
-  };
+  }, []);
 
-  const handleFileChange = useCallback(
-    async (event: ChangeEvent<HTMLInputElement>) => {
-      const files = Array.from(event.target.files || []);
+  const uploadFilesList = useCallback(
+    async (files: File[]) => {
+      if (files.length === 0) return;
 
-      setUploadQueue(files.map((file) => file.name));
+      const prepared = files.map((file, index) =>
+        file.name
+          ? file
+          : new File(
+              [file],
+              `pasted-${Date.now()}-${index}.${
+                file.type === 'image/jpeg'
+                  ? 'jpg'
+                  : (file.type.split('/')[1] ?? 'png')
+              }`,
+              { type: file.type },
+            ),
+      );
+
+      setUploadQueue(prepared.map((file) => file.name));
 
       try {
-        const uploadPromises = files.map((file) => uploadFile(file));
+        const uploadPromises = prepared.map((file) => uploadFile(file));
         const uploadedAttachments = await Promise.all(uploadPromises);
         const successfullyUploadedAttachments = uploadedAttachments.filter(
           (attachment) => attachment !== undefined,
@@ -214,11 +231,69 @@ function PureMultimodalInput({
         setUploadQueue([]);
       }
     },
-    [setAttachments],
+    [setAttachments, uploadFile],
+  );
+
+  const handleFileChange = useCallback(
+    async (event: ChangeEvent<HTMLInputElement>) => {
+      const files = Array.from(event.target.files || []);
+      await uploadFilesList(files);
+    },
+    [uploadFilesList],
+  );
+
+  const handlePaste = useCallback(
+    async (event: ClipboardEvent<HTMLTextAreaElement>) => {
+      const data = event.clipboardData;
+      if (!data) return;
+
+      const imageFiles: File[] = [];
+      const seen = new Set<string>();
+
+      if (data.items) {
+        for (let i = 0; i < data.items.length; i++) {
+          const item = data.items[i];
+          if (item.kind === 'file' && item.type.startsWith('image/')) {
+            const file = item.getAsFile();
+            if (file) {
+              const key = `${file.size}\0${file.type}`;
+              if (!seen.has(key)) {
+                seen.add(key);
+                imageFiles.push(file);
+              }
+            }
+          }
+        }
+      }
+
+      if (imageFiles.length === 0 && data.files?.length) {
+        for (let i = 0; i < data.files.length; i++) {
+          const file = data.files[i];
+          if (file.type.startsWith('image/')) {
+            const key = `${file.size}\0${file.type}`;
+            if (!seen.has(key)) {
+              seen.add(key);
+              imageFiles.push(file);
+            }
+          }
+        }
+      }
+
+      if (imageFiles.length === 0) return;
+
+      if (isModelBusy) {
+        event.preventDefault();
+        toast.error('Wait for the response to finish before adding images.');
+        return;
+      }
+
+      event.preventDefault();
+      await uploadFilesList(imageFiles);
+    },
+    [isModelBusy, uploadFilesList],
   );
 
   const { isAtBottom, scrollToBottom } = useScrollToBottom();
-  const isModelBusy = status === 'submitted' || status === 'streaming';
 
   useEffect(() => {
     if (status === 'submitted') {
@@ -268,10 +343,10 @@ function PureMultimodalInput({
         className="fixed -top-4 -left-4 size-0.5 opacity-0 pointer-events-none"
         ref={fileInputRef}
         multiple
-        accept="image/*,application/pdf"
+        accept="image/*,application/pdf,.pptx,application/vnd.openxmlformats-officedocument.presentationml.presentation,.docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document,.xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         onChange={handleFileChange}
         tabIndex={-1}
-        aria-label="Upload images or PDF files"
+        aria-label="Upload images, PDFs, or Office documents"
       />
 
       <PromptInput
@@ -331,6 +406,7 @@ function PureMultimodalInput({
           placeholder="Send a message..."
           value={input}
           onChange={handleInput}
+          onPaste={handlePaste}
           minHeight={72}
           maxHeight={200}
           disableAutoResize={true}

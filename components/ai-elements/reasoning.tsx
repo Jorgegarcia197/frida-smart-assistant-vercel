@@ -55,6 +55,33 @@ export type ReasoningProps = ComponentProps<typeof Collapsible> & {
 const AUTO_CLOSE_DELAY = 1000;
 const MS_IN_S = 1000;
 
+/** Human-readable duration for the reasoning trigger (avoids "Thought for 178 seconds"). */
+function formatThinkingDurationLabel(totalSeconds: number): string {
+  if (totalSeconds < 1) {
+    return 'less than a second';
+  }
+  if (totalSeconds < 60) {
+    return totalSeconds === 1 ? '1 second' : `${totalSeconds} seconds`;
+  }
+
+  const totalMinutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+
+  if (totalMinutes < 60) {
+    if (seconds === 0) {
+      return totalMinutes === 1 ? '1 minute' : `${totalMinutes} minutes`;
+    }
+    return `${totalMinutes}m ${seconds}s`;
+  }
+
+  const hours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+  if (minutes === 0) {
+    return hours === 1 ? '1 hour' : `${hours} hours`;
+  }
+  return `${hours}h ${minutes}m`;
+}
+
 export const Reasoning = memo(
   ({
     className,
@@ -161,7 +188,7 @@ const defaultGetThinkingMessage = (isStreaming: boolean, duration?: number) => {
   if (duration === undefined) {
     return <p>Thought for a few seconds</p>;
   }
-  return <p>Thought for {duration} seconds</p>;
+  return <p>Thought for {formatThinkingDurationLabel(duration)}</p>;
 };
 
 export const ReasoningTrigger = memo(
@@ -176,7 +203,7 @@ export const ReasoningTrigger = memo(
     return (
       <CollapsibleTrigger
         className={cn(
-          "flex w-full items-center gap-2 text-muted-foreground text-sm transition-colors hover:text-foreground",
+          "flex w-full items-center gap-2 text-sm text-foreground/80 transition-colors hover:text-foreground",
           className
         )}
         {...props}
@@ -211,12 +238,21 @@ export const ReasoningContent = memo(
     <CollapsibleContent
       className={cn(
         "mt-4 text-sm",
-        "data-[state=closed]:fade-out-0 data-[state=closed]:slide-out-to-top-2 data-[state=open]:slide-in-from-top-2 text-muted-foreground outline-none data-[state=closed]:animate-out data-[state=open]:animate-in",
+        "data-[state=closed]:fade-out-0 data-[state=closed]:slide-out-to-top-2 data-[state=open]:slide-in-from-top-2 outline-none data-[state=closed]:animate-out data-[state=open]:animate-in",
         className
       )}
       {...props}
     >
-      <Streamdown plugins={streamdownPlugins}>{children}</Streamdown>
+      <Streamdown
+        plugins={streamdownPlugins}
+        className={cn(
+          "prose prose-sm dark:prose-invert max-w-none w-full leading-relaxed text-foreground",
+          "[&>*:first-child]:mt-0 [&>*:last-child]:mb-0 [&_pre]:overflow-x-auto [&_pre]:max-w-full [&_code]:break-words [&_code]:whitespace-pre-wrap",
+          "[&_p]:mb-3 [&_p:last-child]:mb-0 [&_ul]:my-3 [&_ol]:my-3 [&_li]:my-0.5",
+        )}
+      >
+        {children}
+      </Streamdown>
     </CollapsibleContent>
   )
 );
