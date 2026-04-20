@@ -3,6 +3,10 @@ import { extractReasoningMiddleware, wrapLanguageModel } from 'ai';
 import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
 import { isTestEnvironment } from '../constants';
 import {
+  createSseWebToolTapTransform,
+  ingestOpenAiCompatibleJsonForWebToolsFull,
+} from './web-tool-result-capture';
+import {
   artifactModel,
   chatModel,
   reasoningModel,
@@ -25,6 +29,8 @@ export interface OpenAICompatibleRuntimeConfig {
 }
 
 const DEBUG_OPENAI_COMPATIBLE = process.env.DEBUG_OPENAI_COMPATIBLE === 'true';
+/** When false, skip SSE/JSON tap that maps provider tool outputs into web_search execute (see web-tool-result-capture). */
+const WEB_TOOL_RESULT_CAPTURE = process.env.WEB_TOOL_RESULT_CAPTURE !== 'false';
 const MAX_DEBUG_BODY_CHARS = 4000;
 
 function truncateForLog(value: string): string {
@@ -67,10 +73,7 @@ function normalizeOpenAICompatibleProviderOptions(
     mirroredFields.anthropicExtensions = body.anthropicExtensions;
   }
 
-  if (
-    body.user !== undefined &&
-    existingOpenAICompatible.user === undefined
-  ) {
+  if (body.user !== undefined && existingOpenAICompatible.user === undefined) {
     mirroredFields.user = body.user;
   }
 
@@ -126,11 +129,23 @@ function normalizeOpenAICompatibleProviderOptions(
   };
 }
 
-/** Names the compatible backend injects for Anthropic code execution; must not appear twice in `tools`. */
+/** Code-execution tool ids the compatible backend may inject alongside `anthropicExtensions`. */
 const ANTHROPIC_BACKEND_CODE_EXECUTION_TOOL_NAMES = new Set([
   'text_editor_code_execution',
   'bash_code_execution',
   'code_execution',
+]);
+
+/**
+ * Web tools — only strip from the proxied body when explicitly requested.
+ * Default is **do not strip**: many gateways inject code-execution tools but **not**
+ * `web_search` / `web_fetch`; stripping them here removes the only copy and the model
+ * will truthfully say those tools are unavailable.
+ */
+const ANTHROPIC_BACKEND_WEB_TOOL_NAMES = new Set([
+  'web_search',
+  'web_fetch',
+  '$BUILT_IN_WEB_SEARCH',
 ]);
 
 function getOpenAICompatibleToolName(tool: unknown): string | undefined {
@@ -145,10 +160,12 @@ function getOpenAICompatibleToolName(tool: unknown): string | undefined {
 }
 
 /**
- * When `anthropicExtensions` enables code execution, the compatible server injects
- * Anthropic's code-execution tools. The chat route also registers pass-through tools
- * with the same names so the AI SDK accepts tool calls — but the upstream API rejects
- * duplicate tool names. Drop client-sent duplicates for the HTTP request only.
+ * When `anthropicExtensions` is present, the compatible server may inject Anthropic
+ * code-execution and/or web tools. The chat route registers matching tools for the AI SDK
+ * — if both client and server send the same tool id, the upstream API can reject the
+ * request. Code-execution duplicates are dropped when the backend injects them.
+ * Web tools are **not** stripped unless `ANTHROPIC_COMPAT_STRIP_WEB_TOOLS=true` (gateway
+ * also sends the same tool defs and the upstream rejects duplicates).
  */
 function stripAnthropicBackendDuplicateTools(
   body: Record<string, unknown>,
@@ -172,9 +189,8 @@ function stripAnthropicBackendDuplicateTools(
     return body;
   }
   const anthropicExt = ext as { enableCodeExecution?: boolean };
-  if (anthropicExt.enableCodeExecution === false) {
-    return body;
-  }
+  const stripCodeExecutionDupes = anthropicExt.enableCodeExecution !== false;
+  const stripWebDupes = process.env.ANTHROPIC_COMPAT_STRIP_WEB_TOOLS === 'true';
 
   const tools = body.tools;
   if (!Array.isArray(tools) || tools.length === 0) {
@@ -184,7 +200,16 @@ function stripAnthropicBackendDuplicateTools(
   const filtered = tools.filter((tool) => {
     const name = getOpenAICompatibleToolName(tool);
     if (!name) return true;
-    return !ANTHROPIC_BACKEND_CODE_EXECUTION_TOOL_NAMES.has(name);
+    if (
+      stripCodeExecutionDupes &&
+      ANTHROPIC_BACKEND_CODE_EXECUTION_TOOL_NAMES.has(name)
+    ) {
+      return false;
+    }
+    if (stripWebDupes && ANTHROPIC_BACKEND_WEB_TOOL_NAMES.has(name)) {
+      return false;
+    }
+    return true;
   });
 
   if (filtered.length === tools.length) {
@@ -215,8 +240,7 @@ function getOpenAICompatibleConfig(): OpenAICompatibleConfig {
     reasoningModel: process.env.REASONING_MODEL ?? defaultModel,
     titleModel: process.env.TITLE_MODEL ?? defaultModel,
     artifactModel: process.env.ARTIFACT_MODEL ?? defaultModel,
-    embeddingModel:
-      process.env.EMBEDDING_MODEL ?? 'text-embedding-3-small',
+    embeddingModel: process.env.EMBEDDING_MODEL ?? 'text-embedding-3-small',
   };
 }
 
@@ -315,6 +339,36 @@ function getOpenAICompatibleInstance() {
 
         const response = await fetch(input, init);
 
+        if (WEB_TOOL_RESULT_CAPTURE && response.body) {
+          const urlStr = typeof input === 'string' ? input : input.toString();
+          const isChatCompletions =
+            urlStr.includes('/chat/completions') && method === 'POST';
+          if (isChatCompletions) {
+            const ct = response.headers.get('content-type') ?? '';
+            if (ct.includes('text/event-stream')) {
+              return new Response(
+                response.body.pipeThrough(createSseWebToolTapTransform()),
+                {
+                  status: response.status,
+                  statusText: response.statusText,
+                  headers: response.headers,
+                },
+              );
+            }
+            if (ct.includes('application/json') && !ct.includes('stream')) {
+              try {
+                const text = await response.clone().text();
+                ingestOpenAiCompatibleJsonForWebToolsFull(
+                  JSON.parse(text),
+                  new Map(),
+                );
+              } catch {
+                // ignore parse errors
+              }
+            }
+          }
+        }
+
         if (DEBUG_OPENAI_COMPATIBLE) {
           const contentType = response.headers.get('content-type') ?? '';
           const logBase = {
@@ -364,8 +418,12 @@ const testEmbeddingModel = {
 interface ProductionModels {
   chatModel: ReturnType<ReturnType<typeof createOpenAICompatible>['chatModel']>;
   reasoningModel: ReturnType<typeof wrapLanguageModel>;
-  titleModel: ReturnType<ReturnType<typeof createOpenAICompatible>['chatModel']>;
-  artifactModel: ReturnType<ReturnType<typeof createOpenAICompatible>['chatModel']>;
+  titleModel: ReturnType<
+    ReturnType<typeof createOpenAICompatible>['chatModel']
+  >;
+  artifactModel: ReturnType<
+    ReturnType<typeof createOpenAICompatible>['chatModel']
+  >;
   embeddingModel: ReturnType<
     ReturnType<typeof createOpenAICompatible>['textEmbeddingModel']
   >;
@@ -386,7 +444,9 @@ function getProductionModels(): ProductionModels {
       }),
       titleModel: openAICompatible.chatModel(config.titleModel),
       artifactModel: openAICompatible.chatModel(config.artifactModel),
-      embeddingModel: openAICompatible.textEmbeddingModel(config.embeddingModel),
+      embeddingModel: openAICompatible.textEmbeddingModel(
+        config.embeddingModel,
+      ),
     };
   }
 

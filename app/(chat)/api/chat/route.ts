@@ -5,6 +5,7 @@ import {
   convertToModelMessages,
   JsonToSseTransformStream,
   dynamicTool,
+  type UIMessageStreamWriter,
 } from 'ai';
 import { createMcpToolCallRepair } from '@/lib/ai/mcp-tool-call-repair';
 import { pipeJsonRender } from '@json-render/core';
@@ -26,6 +27,14 @@ import {
   saveChat,
   saveMessages,
 } from '@/lib/db/queries';
+import {
+  createMemory,
+  deleteMemory,
+  listMemories,
+  readMemory,
+  updateMemory,
+  type ChatMemory,
+} from '@/lib/db/memory-queries';
 import { convertToUIMessages, generateUUID } from '@/lib/utils';
 import { generateTitleFromUserMessage } from '../../actions';
 import { createDocument } from '@/lib/ai/tools/create-document';
@@ -37,6 +46,10 @@ import { createMermaidDiagram } from '@/lib/ai/tools/create-mermaid-diagram';
 import { updateAgentTasks } from '@/lib/ai/tools/update-agent-tasks';
 import { renderHostMap } from '@/lib/ai/tools/render-host-map';
 import { expandFilePartsForModel } from '@/lib/ai/expand-file-parts-for-model';
+import { estimateChatContextFromUiMessages } from '@/lib/ai/chat-context-estimate';
+import { isContextOverflowError } from '@/lib/ai/is-context-overflow-error';
+import { drainUiMessageStreamToWriter } from '@/lib/ai/merge-ui-message-stream';
+import { trimUiMessagesForModel } from '@/lib/ai/trim-ui-messages-for-model';
 import {
   myProvider,
   resolveConfiguredLanguageModelId,
@@ -56,6 +69,16 @@ import {
   redactAgentToolsForLog,
 } from '@/lib/ai/tools/agent-custom-api-tools';
 import { buildAgentComputerUseTools } from '@/lib/ai/tools/agent-computer-use-tools';
+import {
+  createAnthropicWebPassthroughTools,
+  isAnthropicWebToolsEnabledForModel,
+} from '@/lib/ai/tools/anthropic-web-tools';
+import {
+  CAPTURED_WEB_TOOL_NAMES,
+  recordProviderWebToolResult,
+  runWithWebToolResultCapture,
+} from '@/lib/ai/web-tool-result-capture';
+import { narrowActiveToolsAfterWebToolSuccess } from '@/lib/ai/web-tools-prepare-step';
 import { z } from 'zod/v3';
 import { postRequestBodySchema, type PostRequestBody } from './schema';
 import { geolocation } from '@vercel/functions';
@@ -64,7 +87,7 @@ import {
   type ResumableStreamContext,
 } from 'resumable-stream';
 import { after } from 'next/server';
-import type { Chat } from '@/lib/db/firebase-types';
+import type { Chat, DBMessage } from '@/lib/db/firebase-types';
 import { differenceInSeconds } from 'date-fns';
 import { ChatSDKError } from '@/lib/errors';
 import type { ChatMessage } from '@/lib/types';
@@ -72,7 +95,8 @@ import type { ChatMessage } from '@/lib/types';
 export const maxDuration = 60;
 const DEBUG_OPENAI_COMPATIBLE = process.env.DEBUG_OPENAI_COMPATIBLE === 'true';
 /** Log each `streamText` chunk (text-delta, tool-call, etc.) to the server terminal. */
-const DEBUG_CHAT_STREAM_CHUNKS = process.env.DEBUG_CHAT_STREAM_CHUNKS === 'true';
+const DEBUG_CHAT_STREAM_CHUNKS =
+  process.env.DEBUG_CHAT_STREAM_CHUNKS === 'true';
 /** Log tool call lifecycle, passthrough executes, and tool-related stream chunks in POST /api/chat. */
 const DEBUG_CHAT_TOOLS = process.env.DEBUG_CHAT_TOOLS === 'true';
 /**
@@ -83,6 +107,13 @@ const CHAT_TOOLS_VERBOSE =
   DEBUG_CHAT_TOOLS ||
   (process.env.NODE_ENV === 'development' &&
     process.env.DEBUG_CHAT_TOOLS !== 'false');
+
+const DEBUG_CHAT_CONTEXT_SIZE =
+  process.env.DEBUG_CHAT_CONTEXT_SIZE === 'true';
+const CHAT_MICROCOMPACT_ENABLED =
+  process.env.CHAT_MICROCOMPACT_ENABLED === 'true';
+const CHAT_RETRY_ON_CONTEXT_OVERFLOW =
+  process.env.CHAT_RETRY_ON_CONTEXT_OVERFLOW === 'true';
 
 function truncateForDebugLog(value: unknown, maxChars = 12000): string {
   try {
@@ -101,11 +132,7 @@ function toolOutputLooksProblematic(output: unknown): boolean {
   if (typeof output !== 'object') return false;
   const o = output as Record<string, unknown>;
   if (o.isError === true) return true;
-  if (
-    'error' in o &&
-    o.error != null &&
-    String(o.error).trim() !== ''
-  ) {
+  if ('error' in o && o.error != null && String(o.error).trim() !== '') {
     return true;
   }
   const content = o.content;
@@ -128,12 +155,41 @@ type AnthropicSkillConfig = {
   version?: string;
 };
 
+type AnthropicThinkingConfig = {
+  type: 'adaptive';
+  effort?: 'low' | 'medium' | 'high' | 'max';
+};
+
+type AnthropicContextEdit =
+  | {
+      type: 'compact_20260112';
+      trigger: { type: 'input_tokens'; value: number };
+      instructions?: string;
+    }
+  | {
+      type: 'clear_thinking_20251015';
+      keep: { type: 'thinking_turns'; value: number };
+    }
+  | {
+      type: 'clear_tool_uses_20250919';
+      trigger: { type: 'input_tokens'; value: number };
+      keep: { type: 'tool_uses'; value: number };
+      clearAtLeast: { type: 'input_tokens'; value: number };
+      excludeTools?: string[];
+    };
+
+type AnthropicContextManagementConfig = {
+  edits: AnthropicContextEdit[];
+};
+
 type AnthropicExtensionsConfig = {
   enableCodeExecution: boolean;
   container?: {
     skills: AnthropicSkillConfig[];
   };
   betas?: string[];
+  thinking?: AnthropicThinkingConfig;
+  contextManagement?: AnthropicContextManagementConfig;
 };
 
 const DEFAULT_ANTHROPIC_SKILLS: AnthropicSkillConfig[] = [
@@ -151,7 +207,101 @@ function parseCsvEnv(value: string | undefined): string[] {
     .filter(Boolean);
 }
 
-function parseAnthropicSkillsEnv(value: string | undefined): AnthropicSkillConfig[] {
+function parsePositiveInt(value: string | undefined, fallback: number): number {
+  if (!value) return fallback;
+  const n = Number.parseInt(value, 10);
+  return Number.isFinite(n) && n > 0 ? n : fallback;
+}
+
+function parseThinkingEffort(
+  value: string | undefined,
+): AnthropicThinkingConfig['effort'] {
+  const normalized = value?.trim().toLowerCase();
+  if (
+    normalized === 'low' ||
+    normalized === 'medium' ||
+    normalized === 'high' ||
+    normalized === 'max'
+  ) {
+    return normalized;
+  }
+  return 'high';
+}
+
+function buildAnthropicThinkingConfig(): AnthropicThinkingConfig | undefined {
+  if (process.env.ANTHROPIC_ENABLE_THINKING !== 'true') return undefined;
+  return {
+    type: 'adaptive',
+    effort: parseThinkingEffort(process.env.ANTHROPIC_THINKING_EFFORT),
+  };
+}
+
+/** Anthropic rejects `compact_20260112` if `trigger.value` is below this (API as of compact beta). */
+const MIN_COMPACT_TRIGGER_INPUT_TOKENS = 50_000;
+
+function buildAnthropicContextManagementConfig():
+  | AnthropicContextManagementConfig
+  | undefined {
+  const edits: AnthropicContextEdit[] = [];
+
+  if (process.env.ANTHROPIC_ENABLE_COMPACTION === 'true') {
+    const threshold = Math.max(
+      MIN_COMPACT_TRIGGER_INPUT_TOKENS,
+      parsePositiveInt(
+        process.env.ANTHROPIC_COMPACTION_THRESHOLD,
+        MIN_COMPACT_TRIGGER_INPUT_TOKENS,
+      ),
+    );
+    const instructions = process.env.ANTHROPIC_COMPACTION_INSTRUCTIONS?.trim();
+    edits.push({
+      type: 'compact_20260112',
+      trigger: { type: 'input_tokens', value: threshold },
+      ...(instructions ? { instructions } : {}),
+    });
+  }
+
+  if (process.env.ANTHROPIC_ENABLE_CLEAR_THINKING === 'true') {
+    edits.push({
+      type: 'clear_thinking_20251015',
+      keep: {
+        type: 'thinking_turns',
+        value: parsePositiveInt(process.env.ANTHROPIC_CLEAR_THINKING_KEEP, 2),
+      },
+    });
+  }
+
+  if (process.env.ANTHROPIC_ENABLE_CLEAR_TOOL_USES === 'true') {
+    const trigger = parsePositiveInt(
+      process.env.ANTHROPIC_CLEAR_TOOL_USES_TRIGGER,
+      30_000,
+    );
+    const keep = parsePositiveInt(
+      process.env.ANTHROPIC_CLEAR_TOOL_USES_KEEP,
+      3,
+    );
+    const clearAtLeast = parsePositiveInt(
+      process.env.ANTHROPIC_CLEAR_TOOL_USES_CLEAR_AT_LEAST,
+      5_000,
+    );
+    const excludeTools = parseCsvEnv(
+      process.env.ANTHROPIC_CLEAR_TOOL_USES_EXCLUDE,
+    );
+    edits.push({
+      type: 'clear_tool_uses_20250919',
+      trigger: { type: 'input_tokens', value: trigger },
+      keep: { type: 'tool_uses', value: keep },
+      clearAtLeast: { type: 'input_tokens', value: clearAtLeast },
+      ...(excludeTools.length > 0 ? { excludeTools } : {}),
+    });
+  }
+
+  if (edits.length === 0) return undefined;
+  return { edits };
+}
+
+function parseAnthropicSkillsEnv(
+  value: string | undefined,
+): AnthropicSkillConfig[] {
   const skills: AnthropicSkillConfig[] = [];
 
   for (const token of parseCsvEnv(value)) {
@@ -180,23 +330,41 @@ function getAnthropicExtensionsForModel(
   resolvedModelId: string,
   selectedChatModel: string,
 ): AnthropicExtensionsConfig | undefined {
-  const enableCodeExecution =
-    process.env.ANTHROPIC_ENABLE_CODE_EXECUTION !== 'false';
-  if (!enableCodeExecution) return undefined;
-
   const isClaudeModel = resolvedModelId.toLowerCase().includes('claude');
   const isReasoningChatPreset = selectedChatModel === 'chat-model-reasoning';
   if (!isClaudeModel && !isReasoningChatPreset) return undefined;
 
-  const configuredSkills = parseAnthropicSkillsEnv(process.env.ANTHROPIC_SKILLS);
+  const enableCodeExecution =
+    process.env.ANTHROPIC_ENABLE_CODE_EXECUTION !== 'false';
+  const webToolsEnabled = process.env.ANTHROPIC_ENABLE_WEB_TOOLS !== 'false';
+  const thinking = buildAnthropicThinkingConfig();
+  const contextManagement = buildAnthropicContextManagementConfig();
+
+  // If nothing Anthropic-specific is enabled, don't ship the extensions blob at
+  // all — this keeps behavior identical to before on non-Claude models and lets
+  // ops turn everything off with a single flag.
+  if (
+    !enableCodeExecution &&
+    !thinking &&
+    !contextManagement &&
+    !webToolsEnabled
+  ) {
+    return undefined;
+  }
+
+  const configuredSkills = parseAnthropicSkillsEnv(
+    process.env.ANTHROPIC_SKILLS,
+  );
   const skills =
     configuredSkills.length > 0 ? configuredSkills : DEFAULT_ANTHROPIC_SKILLS;
   const extraBetas = parseCsvEnv(process.env.ANTHROPIC_EXTENSION_BETAS);
 
   return {
     enableCodeExecution,
-    container: { skills },
+    ...(enableCodeExecution ? { container: { skills } } : {}),
     ...(extraBetas.length > 0 ? { betas: extraBetas } : {}),
+    ...(thinking ? { thinking } : {}),
+    ...(contextManagement ? { contextManagement } : {}),
   };
 }
 
@@ -251,11 +419,137 @@ function createAnthropicSkillsPassthroughTools() {
       execute: passthroughExecute,
     }),
     code_execution: dynamicTool({
-      description: 'Anthropic code execution passthrough (server-side execution).',
+      description:
+        'Anthropic code execution passthrough (server-side execution).',
       inputSchema: passthroughSchema,
       execute: passthroughExecute,
     }),
   } as const;
+}
+
+/**
+ * Build a conversation-scoped, Firebase-backed memory tool. Unlike Anthropic's
+ * native `memory_20250818` tool (filesystem semantics, server-side persistence),
+ * this runs **locally** against Firestore `chats/{chatId}/memory` so the
+ * curated notes live alongside the existing chat document and survive reloads.
+ *
+ * Schema mirrors the plan: a single `action` + optional `key` / `value`.
+ */
+const memoryToolInputSchema = z.object({
+  action: z.enum(['create', 'read', 'update', 'delete', 'list']),
+  key: z.string().optional(),
+  value: z.string().optional(),
+});
+
+function buildMemoryTool(chatId: string) {
+  return dynamicTool({
+    description: [
+      'Persistent conversation memory (key/value) stored in this chat.',
+      'Use to remember durable facts, user preferences, or intermediate results you want to recall later.',
+      'Actions: "list" (no args), "read" (key), "create" (key,value), "update" (key,value), "delete" (key).',
+      'Keys should be short slugs (e.g. "user_name", "report_topic"). Values are free-form text.',
+    ].join(' '),
+    inputSchema: memoryToolInputSchema,
+    execute: async (input: unknown) => {
+      const parsed = memoryToolInputSchema.safeParse(input);
+      if (!parsed.success) {
+        return {
+          ok: false,
+          error: `Invalid memory arguments: ${parsed.error.message}`,
+        };
+      }
+      const { action, key, value } = parsed.data;
+      if (CHAT_TOOLS_VERBOSE) {
+        console.log('🔧 [chat-tools] memory tool execute', {
+          chatId,
+          action,
+          key,
+          hasValue: typeof value === 'string',
+        });
+      }
+
+      try {
+        switch (action) {
+          case 'list': {
+            const entries = await listMemories({ chatId });
+            return {
+              ok: true,
+              count: entries.length,
+              memories: entries.map((m) => ({
+                key: m.key,
+                value: m.value,
+                updatedAt: m.updatedAt.toISOString(),
+              })),
+            };
+          }
+          case 'read': {
+            if (!key) {
+              return { ok: false, error: 'read requires "key"' };
+            }
+            const entry = await readMemory({ chatId, key });
+            if (!entry) {
+              return { ok: false, error: `No memory found for key "${key}"` };
+            }
+            return {
+              ok: true,
+              memory: {
+                key: entry.key,
+                value: entry.value,
+                updatedAt: entry.updatedAt.toISOString(),
+              },
+            };
+          }
+          case 'create': {
+            if (!key || typeof value !== 'string') {
+              return { ok: false, error: 'create requires "key" and "value"' };
+            }
+            const created = await createMemory({ chatId, key, value });
+            return {
+              ok: true,
+              memory: {
+                key: created.key,
+                value: created.value,
+                updatedAt: created.updatedAt.toISOString(),
+              },
+            };
+          }
+          case 'update': {
+            if (!key || typeof value !== 'string') {
+              return { ok: false, error: 'update requires "key" and "value"' };
+            }
+            const updated = await updateMemory({ chatId, key, value });
+            return {
+              ok: true,
+              memory: {
+                key: updated.key,
+                value: updated.value,
+                updatedAt: updated.updatedAt.toISOString(),
+              },
+            };
+          }
+          case 'delete': {
+            if (!key) {
+              return { ok: false, error: 'delete requires "key"' };
+            }
+            const result = await deleteMemory({ chatId, key });
+            return { ok: true, deleted: result.deleted, key };
+          }
+          default:
+            return { ok: false, error: `Unknown action "${String(action)}"` };
+        }
+      } catch (error) {
+        const message =
+          error instanceof Error ? error.message : 'Unknown memory error';
+        console.error('❌ [chat-tools] memory tool error', {
+          chatId,
+          action,
+          key,
+          message,
+        });
+        return { ok: false, error: message };
+      }
+    },
+  });
 }
 
 let globalStreamContext: ResumableStreamContext | null = null;
@@ -615,7 +909,10 @@ export async function POST(request: Request) {
 
   try {
     const json = await request.json();
-    const j = json && typeof json === 'object' ? (json as Record<string, unknown>) : null;
+    const j =
+      json && typeof json === 'object'
+        ? (json as Record<string, unknown>)
+        : null;
     const logSafe = j
       ? {
           ...j,
@@ -661,7 +958,9 @@ export async function POST(request: Request) {
       ...requestBody,
       agentMcpConfig: redactMcpConfigForLog(agentMcpConfig),
       agentTools:
-        agentTools !== undefined ? redactAgentToolsForLog(agentTools) : undefined,
+        agentTools !== undefined
+          ? redactAgentToolsForLog(agentTools)
+          : undefined,
     });
 
     console.log('🔧 Agent System Prompt received:', agentSystemPrompt);
@@ -752,7 +1051,30 @@ export async function POST(request: Request) {
      * office formats (pptx/docx/xlsx). Expand those server-side into bounded
      * text parts; stored messages keep the original `file` parts for the UI.
      */
-    const uiMessagesForModel = await expandFilePartsForModel(uiMessages);
+    const uiExpanded = await expandFilePartsForModel(uiMessages);
+    const microcompactSubs = parseCsvEnv(
+      process.env.CHAT_MICROCOMPACT_TOOL_SUBSTRINGS,
+    );
+    const uiMessagesForModel = CHAT_MICROCOMPACT_ENABLED
+      ? trimUiMessagesForModel(uiExpanded, {
+          preset: 'microcompact',
+          keepRecentMessages: parsePositiveInt(
+            process.env.CHAT_MICROCOMPACT_KEEP_MESSAGES,
+            24,
+          ),
+          allowToolSubstrings:
+            microcompactSubs.length > 0 ? microcompactSubs : undefined,
+        })
+      : uiExpanded;
+
+    const preRequestContextEstimate =
+      estimateChatContextFromUiMessages(uiMessagesForModel);
+    if (DEBUG_CHAT_CONTEXT_SIZE) {
+      console.log(
+        '📊 [chat-context]',
+        JSON.stringify({ chatId: id, ...preRequestContextEstimate }, null, 2),
+      );
+    }
 
     const { longitude, latitude, city, country } = geolocation(request);
 
@@ -786,312 +1108,221 @@ export async function POST(request: Request) {
     const mcpToolDedupeByInput = new Map<string, unknown>();
 
     // Get MCP tools + Agent Builder HTTP tools for this user
-    const { mcpTools, mcpActiveTools, closeAiSdkMcpClients, computerUseRegistered } =
-      await getMcpToolsForAI(
-        session.user.id,
-        effectiveAgentMcpConfig,
-        effectiveAgentKnowledgeBaseIds,
-        effectiveAgentTools,
-        mcpToolDedupeByInput,
-        id,
-      );
+    const {
+      mcpTools,
+      mcpActiveTools,
+      closeAiSdkMcpClients,
+      computerUseRegistered,
+    } = await getMcpToolsForAI(
+      session.user.id,
+      effectiveAgentMcpConfig,
+      effectiveAgentKnowledgeBaseIds,
+      effectiveAgentTools,
+      mcpToolDedupeByInput,
+      id,
+    );
 
     const stream = createUIMessageStream({
       execute: async ({ writer: dataStream }) => {
-        const hasMcpToolsForRequest = mcpActiveTools.length > 0;
-
-        const resolvedModelId =
-          resolveConfiguredLanguageModelId(selectedChatModel);
-        const anthropicExtensions = getAnthropicExtensionsForModel(
-          resolvedModelId,
-          selectedChatModel,
-        );
-        const anthropicSkillIds =
-          anthropicExtensions?.container?.skills.map((skill) => skill.skillId) ?? [];
-        const useNativeFileSkillsMode =
-          forceNativeFileSkills && !!anthropicExtensions;
-
-        const openaiCompatibleProviderOptions: {
-          user?: string;
-          reasoningEffort?: 'medium';
-          anthropicExtensions?: AnthropicExtensionsConfig;
-        } = {};
-
-        if (selectedChatModel === 'chat-model-reasoning') {
-          openaiCompatibleProviderOptions.user = session.user.id;
-          // High reasoning + tools has caused empty streams on some gateways. We always register
-          // built-in tools (createDocument, createMermaidDiagram, etc.); medium keeps tool calls
-          // reliable. High effort without MCP was skewing toward prose-only answers after "thinking".
-          openaiCompatibleProviderOptions.reasoningEffort = 'medium';
-        }
-
-        if (anthropicExtensions) {
-          openaiCompatibleProviderOptions.anthropicExtensions = anthropicExtensions;
-        }
-
-        const providerOptions =
-          Object.keys(openaiCompatibleProviderOptions).length > 0
-            ? {
-                openaiCompatible: openaiCompatibleProviderOptions,
-              }
-            : undefined;
-
-        const systemPromptSections = buildSystemPromptSections({
-          selectedChatModel,
-          requestHints,
-          agentSystemPrompt: effectiveAgentSystemPrompt,
-          agentResponsibilities: effectiveAgentResponsibilities,
-          agentKnowledgeBaseIds: effectiveAgentKnowledgeBaseIds,
-          mcpToolNames: mcpActiveTools,
-          anthropicSkillsEnabled: !!anthropicExtensions,
-          anthropicSkills: anthropicSkillIds,
-          forceNativeFileSkills: useNativeFileSkillsMode,
-          desktopComputerUseEnabled: computerUseRegistered,
-        });
-
-        const systemPromptText = buildEffectiveSystemPrompt({
-          overrideSystemPrompt: process.env.SYSTEM_PROMPT_OVERRIDE,
-          appendSystemPrompt: process.env.SYSTEM_PROMPT_APPEND,
-          build: () => joinSystemPromptSections(systemPromptSections),
-        });
-
-        if (process.env.DEBUG_SYSTEM_PROMPT === 'true') {
-          console.log(dumpSystemPrompt(systemPromptSections));
-          console.log('🔧 System Prompt (resolved):', systemPromptText);
-        }
-
-        // Same ToolSet as `streamText` so `convertToModelMessages` can serialize
-        // prior turns' tool outputs (especially dynamic MCP tools) for the model/core.
-        const toolsForModel: Record<string, any> = {
-          getWeather,
-          updateAgentTasks,
-          renderHostMap,
-          ...mcpTools,
-        };
-
-        // Always register Anthropic code-execution passthrough tools so the model/gateway never
-        // sees "unavailable tool" for these ids (multi-turn + strict activeTools).
-        Object.assign(toolsForModel, createAnthropicSkillsPassthroughTools());
-
-        if (!useNativeFileSkillsMode) {
-          Object.assign(toolsForModel, {
-            createDocument: createDocument({ session, dataStream }),
-            updateDocument: updateDocument({ session, dataStream }),
-            requestSuggestions: requestSuggestions({
-              session,
-              dataStream,
-            }),
-            createIshikawaDiagram: createIshikawaDiagram({ session, dataStream }),
-            createMermaidDiagram: createMermaidDiagram({ session, dataStream }),
-          });
-        }
-
-        if (DEBUG_OPENAI_COMPATIBLE) {
-          const latestMessage = uiMessagesForModel.at(-1);
-          console.log(
-            '🔍 [compatible-api] outgoing request',
-            JSON.stringify(
-              {
-                selectedChatModel,
-                providerOptions,
-                toolCount: Object.keys(toolsForModel).length,
-                latestMessage: latestMessage
-                  ? {
-                      id: latestMessage.id,
-                      role: latestMessage.role,
-                      partTypes: latestMessage.parts.map((part) => part.type),
-                    }
-                  : null,
-              },
-              null,
-              2,
-            ),
-          );
-        }
-
-        const result = streamText({
-          model: myProvider.languageModel(selectedChatModel),
-          system: systemPromptText,
-          messages: await convertToModelMessages(uiMessagesForModel, {
-            tools: toolsForModel,
-          }),
-          providerOptions,
-          experimental_repairToolCall:
-            hasMcpToolsForRequest ? createMcpToolCallRepair() : undefined,
-          // Keep raw provider chunk boundaries so json-render SpecStream (JSONL patches)
-          // can flush progressively without word-level buffering/rechunking.
-          // Tool call + optional follow-up text needs more than one step
-          stopWhen: stepCountIs(
-            computerUseRegistered ? 18 : hasMcpToolsForRequest ? 12 : 5,
-          ),
-          // Explicit auto whenever tools exist (built-ins are always present); undefined matched some
-          // gateways poorly vs MCP-only turns that passed 'auto'.
-          toolChoice: 'auto',
-          onChunk: ({ chunk }) => {
-            if (chunk.type === 'tool-result') {
-              const tr = chunk as { toolName?: string; toolCallId?: string; output?: unknown };
-              if (toolOutputLooksProblematic(tr.output)) {
-                console.warn('⚠️ [chat-tools] stream tool-result looks like failure', {
-                  toolName: tr.toolName,
-                  toolCallId: tr.toolCallId,
-                  outputPreview: truncateForDebugLog(tr.output, 8000),
-                });
-              }
-            }
-            if (CHAT_TOOLS_VERBOSE) {
-              const t = chunk.type;
-              if (
-                t === 'tool-call' ||
-                t === 'tool-input-start' ||
-                t === 'tool-input-delta' ||
-                t === 'tool-result' ||
-                t === 'raw'
-              ) {
-                console.log('🔧 [chat-tools] stream chunk', {
-                  type: t,
-                  preview: truncateForDebugLog(chunk, 16000),
-                });
-              }
-            }
-            if (DEBUG_CHAT_STREAM_CHUNKS) {
-              if (chunk.type === 'text-delta') {
-                const text =
-                  'text' in chunk && typeof chunk.text === 'string'
-                    ? chunk.text
-                    : '';
-                console.log('🔍 [chat-stream-chunk]', {
-                  type: chunk.type,
-                  textPreview: text.slice(0, 160),
-                });
-              } else if (chunk.type === 'reasoning-delta') {
-                const text =
-                  'text' in chunk && typeof chunk.text === 'string'
-                    ? chunk.text
-                    : '';
-                console.log('🔍 [chat-stream-chunk]', {
-                  type: chunk.type,
-                  textPreview: text.slice(0, 160),
-                });
-              } else {
-                console.log('🔍 [chat-stream-chunk]', chunk);
-              }
-            }
-          },
-          ...(CHAT_TOOLS_VERBOSE
-            ? {
-                onError: ({ error }: { error: unknown }) => {
-                  console.error('🔧 [chat-tools] streamText error', error);
-                },
-                experimental_onToolCallStart: ({
-                  toolCall,
-                  stepNumber,
-                }: {
-                  toolCall: {
-                    toolName: string;
-                    toolCallId: string;
-                    providerExecuted?: boolean;
-                    input?: unknown;
-                  };
-                  stepNumber: number | undefined;
-                }) => {
-                  console.log('🔧 [chat-tools] onToolCallStart', {
-                    stepNumber,
-                    toolName: toolCall.toolName,
-                    toolCallId: toolCall.toolCallId,
-                    providerExecuted: toolCall.providerExecuted,
-                    inputPreview: truncateForDebugLog(
-                      'input' in toolCall ? toolCall.input : toolCall,
-                      8000,
+        await runWithWebToolResultCapture(async () => {
+          dataStream.write({
+            type: 'data-context-payload-estimate',
+            data: {
+              chatId: id,
+              triggerMessageId: message.id,
+              messageCount: preRequestContextEstimate.messageCount,
+              partTypeHistogram: preRequestContextEstimate.partTypeHistogram,
+              characterCount: preRequestContextEstimate.characterCount,
+              approxInputTokens: preRequestContextEstimate.approxInputTokens,
+              microcompactEnabled: CHAT_MICROCOMPACT_ENABLED,
+              ...(CHAT_MICROCOMPACT_ENABLED
+                ? {
+                    keepRecentMessages: parsePositiveInt(
+                      process.env.CHAT_MICROCOMPACT_KEEP_MESSAGES,
+                      24,
                     ),
-                  });
-                },
-                experimental_onToolCallFinish: (
-                  event:
-                    | {
-                        success: true;
-                        toolCall: { toolName: string; toolCallId: string };
-                        durationMs: number;
-                        stepNumber: number | undefined;
-                        output: unknown;
-                      }
-                    | {
-                        success: false;
-                        toolCall: { toolName: string; toolCallId: string };
-                        durationMs: number;
-                        stepNumber: number | undefined;
-                        error: unknown;
-                      },
-                ) => {
-                  const base = {
-                    stepNumber: event.stepNumber,
-                    toolName: event.toolCall.toolName,
-                    toolCallId: event.toolCall.toolCallId,
-                    durationMs: event.durationMs,
-                  };
-                  if (event.success) {
-                    console.log('🔧 [chat-tools] onToolCallFinish ok', {
-                      ...base,
-                      outputPreview: truncateForDebugLog(event.output, 12000),
-                    });
-                  } else {
-                    console.log('🔧 [chat-tools] onToolCallFinish error', {
-                      ...base,
-                      error: truncateForDebugLog(event.error, 8000),
-                    });
+                    ...(microcompactSubs.length > 0
+                      ? { allowToolSubstrings: microcompactSubs }
+                      : {}),
                   }
-                },
-                onStepFinish: (step: {
-                  finishReason: string;
-                  toolCalls: Array<{ toolName: string; toolCallId: string }>;
-                  toolResults: Array<{
-                    toolName: string;
-                    toolCallId: string;
-                    output: unknown;
-                  }>;
-                }) => {
-                  console.log('🔧 [chat-tools] onStepFinish', {
-                    finishReason: step.finishReason,
-                    toolCalls: step.toolCalls.map((tc) => ({
-                      name: tc.toolName,
-                      id: tc.toolCallId,
-                    })),
-                    toolResults: step.toolResults.map((tr) => ({
-                      toolName: tr.toolName,
-                      toolCallId: tr.toolCallId,
-                      outputPreview: truncateForDebugLog(tr.output, 8000),
-                    })),
-                  });
-                },
-              }
-            : {}),
-          onFinish: async (event) => {
-            for (const step of event.steps) {
-              if (step.finishReason === 'error') {
-                console.warn('⚠️ [chat-tools] step finishReason=error', {
-                  stepNumber: step.stepNumber,
-                  textPreview: step.text?.slice(0, 500),
-                });
-              }
-              for (const tr of step.toolResults) {
-                if (toolOutputLooksProblematic(tr.output)) {
-                  console.warn(
-                    '⚠️ [chat-tools] tool result flagged as failure (provider / gateway)',
-                    {
-                      stepNumber: step.stepNumber,
-                      toolName: tr.toolName,
-                      toolCallId: tr.toolCallId,
-                      outputPreview: truncateForDebugLog(tr.output, 8000),
-                    },
-                  );
-                }
-              }
-            }
-            await closeAiSdkMcpClients();
-          },
+                : {}),
+            },
+            transient: true,
+          });
 
-          // Same built-in tools for all models so artifacts (createDocument / updateDocument)
-          // work when using chat-model-reasoning (default). MCP tools stay appended.
-          activeTools: [
+          const hasMcpToolsForRequest = mcpActiveTools.length > 0;
+
+          const resolvedModelId =
+            resolveConfiguredLanguageModelId(selectedChatModel);
+          const anthropicWebToolsEnabled = isAnthropicWebToolsEnabledForModel(
+            resolvedModelId,
+            selectedChatModel,
+          );
+          const anthropicExtensions = getAnthropicExtensionsForModel(
+            resolvedModelId,
+            selectedChatModel,
+          );
+          const anthropicSkillIds =
+            anthropicExtensions?.container?.skills.map(
+              (skill) => skill.skillId,
+            ) ?? [];
+          // Code execution + skills are now decoupled from thinking/compaction,
+          // so gate native-file mode and the skills prompt on the code-exec flag
+          // rather than the mere presence of the extensions blob.
+          const anthropicCodeExecEnabled =
+            anthropicExtensions?.enableCodeExecution === true;
+          const useNativeFileSkillsMode =
+            forceNativeFileSkills && anthropicCodeExecEnabled;
+
+          const openaiCompatibleProviderOptions: {
+            user?: string;
+            reasoningEffort?: 'medium';
+            anthropicExtensions?: AnthropicExtensionsConfig;
+          } = {};
+
+          if (selectedChatModel === 'chat-model-reasoning') {
+            openaiCompatibleProviderOptions.user = session.user.id;
+            // High reasoning + tools has caused empty streams on some gateways. We always register
+            // built-in tools (createDocument, createMermaidDiagram, etc.); medium keeps tool calls
+            // reliable. High effort without MCP was skewing toward prose-only answers after "thinking".
+            openaiCompatibleProviderOptions.reasoningEffort = 'medium';
+          }
+
+          if (anthropicExtensions) {
+            openaiCompatibleProviderOptions.anthropicExtensions =
+              anthropicExtensions;
+          }
+
+          const providerOptions =
+            Object.keys(openaiCompatibleProviderOptions).length > 0
+              ? {
+                  openaiCompatible: openaiCompatibleProviderOptions,
+                }
+              : undefined;
+
+          const memoryToolEnabled =
+            process.env.ANTHROPIC_ENABLE_MEMORY_TOOL !== 'false';
+
+          /**
+           * Snapshot current memories so the system prompt can tell the model
+           * *what it already remembers* for this chat before it decides whether
+           * to call the memory tool. Failure here must never block the request.
+           */
+          let existingMemories: ChatMemory[] = [];
+          if (memoryToolEnabled) {
+            try {
+              existingMemories = await listMemories({ chatId: id });
+            } catch (error) {
+              console.warn(
+                '⚠️ [chat-tools] failed to load memories for prompt',
+                {
+                  chatId: id,
+                  error: error instanceof Error ? error.message : error,
+                },
+              );
+            }
+          }
+
+          const systemPromptSections = buildSystemPromptSections({
+            selectedChatModel,
+            requestHints,
+            agentSystemPrompt: effectiveAgentSystemPrompt,
+            agentResponsibilities: effectiveAgentResponsibilities,
+            agentKnowledgeBaseIds: effectiveAgentKnowledgeBaseIds,
+            mcpToolNames: mcpActiveTools,
+            anthropicSkillsEnabled: anthropicCodeExecEnabled,
+            anthropicSkills: anthropicSkillIds,
+            forceNativeFileSkills: useNativeFileSkillsMode,
+            desktopComputerUseEnabled: computerUseRegistered,
+            memoryToolEnabled,
+            memorySnapshot: existingMemories.map((m) => ({
+              key: m.key,
+              value: m.value,
+            })),
+            anthropicContextCompactionEnabled:
+              process.env.ANTHROPIC_ENABLE_COMPACTION === 'true',
+            anthropicWebToolsEnabled,
+            systemPromptDensity:
+              process.env.SYSTEM_PROMPT_DENSITY === 'compact'
+                ? 'compact'
+                : undefined,
+          });
+
+          const systemPromptText = buildEffectiveSystemPrompt({
+            overrideSystemPrompt: process.env.SYSTEM_PROMPT_OVERRIDE,
+            appendSystemPrompt: process.env.SYSTEM_PROMPT_APPEND,
+            build: () => joinSystemPromptSections(systemPromptSections),
+          });
+
+          if (process.env.DEBUG_SYSTEM_PROMPT === 'true') {
+            console.log(dumpSystemPrompt(systemPromptSections));
+            console.log('🔧 System Prompt (resolved):', systemPromptText);
+          }
+
+          // Same ToolSet as `streamText` so `convertToModelMessages` can serialize
+          // prior turns' tool outputs (especially dynamic MCP tools) for the model/core.
+          const toolsForModel: Record<string, any> = {
+            getWeather,
+            updateAgentTasks,
+            renderHostMap,
+            ...mcpTools,
+          };
+
+          // Always register Anthropic code-execution passthrough tools so the model/gateway never
+          // sees "unavailable tool" for these ids (multi-turn + strict activeTools).
+          Object.assign(toolsForModel, createAnthropicSkillsPassthroughTools());
+
+          if (!useNativeFileSkillsMode) {
+            Object.assign(toolsForModel, {
+              createDocument: createDocument({ session, dataStream }),
+              updateDocument: updateDocument({ session, dataStream }),
+              requestSuggestions: requestSuggestions({
+                session,
+                dataStream,
+              }),
+              createIshikawaDiagram: createIshikawaDiagram({
+                session,
+                dataStream,
+              }),
+              createMermaidDiagram: createMermaidDiagram({
+                session,
+                dataStream,
+              }),
+            });
+          }
+
+          if (memoryToolEnabled) {
+            toolsForModel.memory = buildMemoryTool(id);
+          }
+
+          if (anthropicWebToolsEnabled) {
+            Object.assign(toolsForModel, createAnthropicWebPassthroughTools());
+          }
+
+          if (DEBUG_OPENAI_COMPATIBLE) {
+            const latestMessage = uiMessagesForModel.at(-1);
+            console.log(
+              '🔍 [compatible-api] outgoing request',
+              JSON.stringify(
+                {
+                  selectedChatModel,
+                  providerOptions,
+                  toolCount: Object.keys(toolsForModel).length,
+                  latestMessage: latestMessage
+                    ? {
+                        id: latestMessage.id,
+                        role: latestMessage.role,
+                        partTypes: latestMessage.parts.map((part) => part.type),
+                      }
+                    : null,
+                },
+                null,
+                2,
+              ),
+            );
+          }
+
+          const activeToolsBase: string[] = [
             'getWeather',
             ...(useNativeFileSkillsMode
               ? []
@@ -1107,20 +1338,290 @@ export async function POST(request: Request) {
             'code_execution',
             'updateAgentTasks',
             'renderHostMap',
+            ...(anthropicWebToolsEnabled
+              ? (['web_search', 'web_fetch'] as const)
+              : []),
+            ...(memoryToolEnabled ? ['memory'] : []),
             ...mcpActiveTools,
-          ] as any,
-          tools: toolsForModel,
-        });
+          ];
 
-        // Single consumer: merge() already reads `fullStream` via `toUIMessageStream`.
-        // A second `consumeStream()` would tee the model stream again and race the UI merge.
-        dataStream.merge(
-          pipeJsonRender(
+          const attachModelStreamToWriter = async (
+            writer: UIMessageStreamWriter<ChatMessage>,
+            modelUiMessages: ChatMessage[],
+          ) => {
+            const result = streamText({
+            model: myProvider.languageModel(selectedChatModel),
+            system: systemPromptText,
+            messages: await convertToModelMessages(modelUiMessages, {
+              tools: toolsForModel,
+            }),
+            providerOptions,
+            experimental_repairToolCall: hasMcpToolsForRequest
+              ? createMcpToolCallRepair()
+              : undefined,
+            // Keep raw provider chunk boundaries so json-render SpecStream (JSONL patches)
+            // can flush progressively without word-level buffering/rechunking.
+            // Tool call + optional follow-up text needs more than one step
+            stopWhen: stepCountIs(
+              computerUseRegistered
+                ? 18
+                : hasMcpToolsForRequest
+                  ? 12
+                  : anthropicWebToolsEnabled
+                    ? 8
+                    : 5,
+            ),
+            // Explicit auto whenever tools exist (built-ins are always present); undefined matched some
+            // gateways poorly vs MCP-only turns that passed 'auto'.
+            toolChoice: 'auto',
+            prepareStep: async ({ steps, messages }) =>
+              narrowActiveToolsAfterWebToolSuccess({
+                anthropicWebToolsEnabled,
+                baseActiveTools: activeToolsBase,
+                steps,
+                messages,
+              }),
+            onChunk: ({ chunk }) => {
+              if (chunk.type === 'tool-result') {
+                const tr = chunk as {
+                  toolName?: string;
+                  toolCallId?: string;
+                  output?: unknown;
+                };
+                if (
+                  tr.toolCallId &&
+                  tr.toolName &&
+                  CAPTURED_WEB_TOOL_NAMES.has(tr.toolName) &&
+                  tr.output !== undefined
+                ) {
+                  recordProviderWebToolResult(tr.toolCallId, tr.output);
+                }
+                if (toolOutputLooksProblematic(tr.output)) {
+                  console.warn(
+                    '⚠️ [chat-tools] stream tool-result looks like failure',
+                    {
+                      toolName: tr.toolName,
+                      toolCallId: tr.toolCallId,
+                      outputPreview: truncateForDebugLog(tr.output, 8000),
+                    },
+                  );
+                }
+              }
+              if (CHAT_TOOLS_VERBOSE) {
+                const t = chunk.type;
+                if (
+                  t === 'tool-call' ||
+                  t === 'tool-input-start' ||
+                  t === 'tool-input-delta' ||
+                  t === 'tool-result' ||
+                  t === 'raw'
+                ) {
+                  console.log('🔧 [chat-tools] stream chunk', {
+                    type: t,
+                    preview: truncateForDebugLog(chunk, 16000),
+                  });
+                }
+              }
+              if (DEBUG_CHAT_STREAM_CHUNKS) {
+                if (chunk.type === 'text-delta') {
+                  const text =
+                    'text' in chunk && typeof chunk.text === 'string'
+                      ? chunk.text
+                      : '';
+                  console.log('🔍 [chat-stream-chunk]', {
+                    type: chunk.type,
+                    textPreview: text.slice(0, 160),
+                  });
+                } else if (chunk.type === 'reasoning-delta') {
+                  const text =
+                    'text' in chunk && typeof chunk.text === 'string'
+                      ? chunk.text
+                      : '';
+                  console.log('🔍 [chat-stream-chunk]', {
+                    type: chunk.type,
+                    textPreview: text.slice(0, 160),
+                  });
+                } else {
+                  console.log('🔍 [chat-stream-chunk]', chunk);
+                }
+              }
+            },
+            ...(CHAT_TOOLS_VERBOSE
+              ? {
+                  onError: ({ error }: { error: unknown }) => {
+                    console.error('🔧 [chat-tools] streamText error', error);
+                  },
+                  experimental_onToolCallStart: ({
+                    toolCall,
+                    stepNumber,
+                  }: {
+                    toolCall: {
+                      toolName: string;
+                      toolCallId: string;
+                      providerExecuted?: boolean;
+                      input?: unknown;
+                    };
+                    stepNumber: number | undefined;
+                  }) => {
+                    console.log('🔧 [chat-tools] onToolCallStart', {
+                      stepNumber,
+                      toolName: toolCall.toolName,
+                      toolCallId: toolCall.toolCallId,
+                      providerExecuted: toolCall.providerExecuted,
+                      inputPreview: truncateForDebugLog(
+                        'input' in toolCall ? toolCall.input : toolCall,
+                        8000,
+                      ),
+                    });
+                  },
+                  experimental_onToolCallFinish: (
+                    event:
+                      | {
+                          success: true;
+                          toolCall: { toolName: string; toolCallId: string };
+                          durationMs: number;
+                          stepNumber: number | undefined;
+                          output: unknown;
+                        }
+                      | {
+                          success: false;
+                          toolCall: { toolName: string; toolCallId: string };
+                          durationMs: number;
+                          stepNumber: number | undefined;
+                          error: unknown;
+                        },
+                  ) => {
+                    const base = {
+                      stepNumber: event.stepNumber,
+                      toolName: event.toolCall.toolName,
+                      toolCallId: event.toolCall.toolCallId,
+                      durationMs: event.durationMs,
+                    };
+                    if (event.success) {
+                      console.log('🔧 [chat-tools] onToolCallFinish ok', {
+                        ...base,
+                        outputPreview: truncateForDebugLog(event.output, 12000),
+                      });
+                    } else {
+                      console.log('🔧 [chat-tools] onToolCallFinish error', {
+                        ...base,
+                        error: truncateForDebugLog(event.error, 8000),
+                      });
+                    }
+                  },
+                  onStepFinish: (step: {
+                    finishReason: string;
+                    toolCalls: Array<{ toolName: string; toolCallId: string }>;
+                    toolResults: Array<{
+                      toolName: string;
+                      toolCallId: string;
+                      output: unknown;
+                    }>;
+                  }) => {
+                    console.log('🔧 [chat-tools] onStepFinish', {
+                      finishReason: step.finishReason,
+                      toolCalls: step.toolCalls.map((tc) => ({
+                        name: tc.toolName,
+                        id: tc.toolCallId,
+                      })),
+                      toolResults: step.toolResults.map((tr) => ({
+                        toolName: tr.toolName,
+                        toolCallId: tr.toolCallId,
+                        outputPreview: truncateForDebugLog(tr.output, 8000),
+                      })),
+                    });
+                  },
+                }
+              : {}),
+            onFinish: async (event) => {
+              for (const step of event.steps) {
+                if (step.finishReason === 'error') {
+                  console.warn('⚠️ [chat-tools] step finishReason=error', {
+                    stepNumber: step.stepNumber,
+                    textPreview: step.text?.slice(0, 500),
+                  });
+                }
+                for (const tr of step.toolResults) {
+                  if (toolOutputLooksProblematic(tr.output)) {
+                    console.warn(
+                      '⚠️ [chat-tools] tool result flagged as failure (provider / gateway)',
+                      {
+                        stepNumber: step.stepNumber,
+                        toolName: tr.toolName,
+                        toolCallId: tr.toolCallId,
+                        outputPreview: truncateForDebugLog(tr.output, 8000),
+                      },
+                    );
+                  }
+                }
+              }
+              await closeAiSdkMcpClients();
+            },
+
+            // Same built-in tools for all models so artifacts (createDocument / updateDocument)
+            // work when using chat-model-reasoning (default). MCP tools stay appended.
+            // `prepareStep` may drop `web_fetch` after a successful `web_search` (and vice versa)
+            // so generic questions do not run both tools in one turn.
+            activeTools: activeToolsBase as any,
+            tools: toolsForModel,
+          });
+
+          const piped = pipeJsonRender(
             result.toUIMessageStream({
               sendReasoning: true,
+              sendSources: true,
+              messageMetadata: ({ part }) =>
+                part.type === 'finish'
+                  ? {
+                      usage: part.totalUsage,
+                      createdAt: new Date().toISOString(),
+                    }
+                  : undefined,
             }),
-          ),
-        );
+          ) as Parameters<UIMessageStreamWriter<ChatMessage>['merge']>[0];
+
+          if (CHAT_RETRY_ON_CONTEXT_OVERFLOW) {
+            await drainUiMessageStreamToWriter(writer, piped);
+          } else {
+            // Single consumer: merge() reads `fullStream` via `toUIMessageStream`.
+            writer.merge(piped);
+          }
+          };
+
+          let overflowRetried = false;
+          try {
+            await attachModelStreamToWriter(dataStream, uiMessagesForModel);
+          } catch (error) {
+            if (
+              CHAT_RETRY_ON_CONTEXT_OVERFLOW &&
+              !overflowRetried &&
+              isContextOverflowError(error)
+            ) {
+              overflowRetried = true;
+              console.warn(
+                '⚠️ [chat-context] overflow; retry with aggressive trim',
+                {
+                  chatId: id,
+                  message: error instanceof Error ? error.message : error,
+                },
+              );
+              dataStream.write({
+                type: 'data-context-trim-notice',
+                data:
+                  'Context was trimmed automatically; earlier tool output may need to be re-run.',
+                transient: true,
+              });
+              await attachModelStreamToWriter(
+                dataStream,
+                trimUiMessagesForModel(uiMessagesForModel, {
+                  preset: 'overflow-retry',
+                }),
+              );
+            } else {
+              throw error;
+            }
+          }
+        });
       },
       generateId: generateUUID,
       onFinish: async ({ messages }) => {
@@ -1165,14 +1666,23 @@ export async function POST(request: Request) {
         }
 
         await saveMessages({
-          messages: messages.map((message) => ({
-            id: message.id,
-            role: message.role,
-            parts: message.parts,
-            createdAt: new Date(),
-            attachments: [],
-            chatId: id,
-          })),
+          messages: messages.map((message): DBMessage => {
+            const row: DBMessage = {
+              id: message.id,
+              role: message.role,
+              parts: message.parts,
+              createdAt: new Date(),
+              attachments: [],
+              chatId: id,
+            };
+            if (message.role === 'assistant' && message.metadata) {
+              const u = (message.metadata as { usage?: unknown }).usage;
+              if (u && typeof u === 'object') {
+                row.usage = u as NonNullable<DBMessage['usage']>;
+              }
+            }
+            return row;
+          }),
         });
       },
       onError: () => {

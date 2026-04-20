@@ -32,6 +32,7 @@ import {
 } from '@modelcontextprotocol/sdk/types.js';
 import { secondsToMs } from './utils';
 import { redactMcpConfigForLog } from './merge-server-mcp-env';
+import { assertSafeMcpRemoteUrl } from './safe-mcp-remote-url';
 
 // Default timeout for internal MCP data requests in milliseconds; is not the same as the user facing timeout stored as DEFAULT_MCP_TIMEOUT_SECONDS
 const DEFAULT_REQUEST_TIMEOUT_MS = 5000;
@@ -53,6 +54,16 @@ const RemoteConfigSchema = BaseConfigSchema.extend({
   transportType: z.enum(['sse', 'http']).default('sse'),
   /** Optional headers for remote requests (e.g. x-api-key, x-db-url from agent builder). */
   env: z.record(z.string()).optional(),
+}).superRefine((val, ctx) => {
+  try {
+    assertSafeMcpRemoteUrl(val.url);
+  } catch (e) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: e instanceof Error ? e.message : String(e),
+      path: ['url'],
+    });
+  }
 });
 
 const StdioConfigSchema = BaseConfigSchema.extend({
@@ -327,6 +338,10 @@ export class MCPClient {
         | StdioClientTransport
         | SSEClientTransport
         | StreamableHTTPClientTransport;
+
+      if (config.transportType === 'sse' || config.transportType === 'http') {
+        assertSafeMcpRemoteUrl(config.url);
+      }
 
       if (config.transportType === 'sse') {
         console.log('Creating SSE transport for:', name);

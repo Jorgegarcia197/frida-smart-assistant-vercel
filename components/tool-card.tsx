@@ -23,7 +23,34 @@ import {
   CollapsibleContent,
   CollapsibleTrigger,
 } from '@/components/ui/collapsible';
-import { ChevronDownIcon, FileText, Plug, Server, Sparkles } from 'lucide-react';
+import {
+  ChevronDownIcon,
+  FileText,
+  Plug,
+  Server,
+  Sparkles,
+} from 'lucide-react';
+import {
+  InlineCitation,
+  InlineCitationCard,
+  InlineCitationCardBody,
+  InlineCitationCardTrigger,
+  InlineCitationCarousel,
+  InlineCitationCarouselContent,
+  InlineCitationCarouselHeader,
+  InlineCitationCarouselIndex,
+  InlineCitationCarouselItem,
+  InlineCitationCarouselNext,
+  InlineCitationCarouselPrev,
+  InlineCitationSource,
+} from '@/components/ai-elements/inline-citation';
+import { Sources, SourcesContent, SourcesTrigger } from '@/components/ai-elements/sources';
+import { WebSourceUrlRows } from '@/components/message-sources';
+import { Response } from '@/components/elements/response';
+import {
+  isFridaNormalizedWebToolResult,
+  redactWebToolDebugPayloadString,
+} from '@/lib/ai/normalize-anthropic-web-tool-result';
 import { getGeneratedFileTypeSubtitle } from '@/lib/generated-file-label';
 
 export type ToolCardSource = 'mcp' | 'api';
@@ -195,9 +222,7 @@ function GeneratedImageFromFile({
 }
 
 function humanizeSkillToolName(toolName: string): string {
-  return toolName
-    .replace(/_/g, ' ')
-    .replace(/\b\w/g, (c) => c.toUpperCase());
+  return toolName.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
 const DEBUG_TOOL_INPUT_MAX_CHARS = 14_000;
@@ -225,25 +250,60 @@ function extractToolFailureDetail(result: unknown): string | null {
   return null;
 }
 
-function formatToolInputForDebug(args: unknown): string {
+function formatToolInputForDebug(args: unknown, toolName?: string): string {
   if (args === undefined) return '';
   try {
-    const s =
-      typeof args === 'string' ? args : JSON.stringify(args, null, 2);
-    if (s.length <= DEBUG_TOOL_INPUT_MAX_CHARS) return s;
-    return `${s.slice(0, DEBUG_TOOL_INPUT_MAX_CHARS)}\n\n… [truncated ${s.length - DEBUG_TOOL_INPUT_MAX_CHARS} chars]`;
+    const s = typeof args === 'string' ? args : JSON.stringify(args, null, 2);
+    let out =
+      s.length <= DEBUG_TOOL_INPUT_MAX_CHARS
+        ? s
+        : `${s.slice(0, DEBUG_TOOL_INPUT_MAX_CHARS)}\n\n… [truncated ${s.length - DEBUG_TOOL_INPUT_MAX_CHARS} chars]`;
+    if (typeof toolName === 'string' && UPSTREAM_WEB_TOOL_NAMES.has(toolName)) {
+      out = redactWebToolDebugPayloadString(out);
+    }
+    return out;
   } catch {
     return String(args);
   }
 }
 
-function ToolInputDebugCollapsible({ args }: { args: unknown }) {
+const UPSTREAM_WEB_TOOL_NAMES = new Set([
+  'web_search',
+  'web_fetch',
+  '$BUILT_IN_WEB_SEARCH',
+]);
+
+function isEffectivelyEmptyToolInput(args: unknown): boolean {
+  if (args === undefined || args === null) return true;
+  if (typeof args === 'object' && !Array.isArray(args)) {
+    return Object.keys(args as object).length === 0;
+  }
+  if (typeof args === 'string') return args.trim().length === 0;
+  return false;
+}
+
+function ToolInputDebugCollapsible({
+  args,
+  toolName,
+}: {
+  args: unknown;
+  toolName?: string;
+}) {
   if (args === undefined) {
     return null;
   }
 
+  const upstreamWebEmptyInput =
+    typeof toolName === 'string' &&
+    UPSTREAM_WEB_TOOL_NAMES.has(toolName) &&
+    isEffectivelyEmptyToolInput(args);
+
+  const debugDefaultOpen = !(
+    typeof toolName === 'string' && UPSTREAM_WEB_TOOL_NAMES.has(toolName)
+  );
+
   return (
-    <Collapsible defaultOpen className="group space-y-0">
+    <Collapsible defaultOpen={debugDefaultOpen} className="group space-y-0">
       <div className="px-0 pb-0.5 pt-1 group-data-[state=closed]:px-1 group-data-[state=closed]:pb-2">
         <CollapsibleTrigger
           className={cn(
@@ -264,8 +324,21 @@ function ToolInputDebugCollapsible({ args }: { args: unknown }) {
               'max-h-56 overflow-y-auto rounded-md border border-border/50 bg-muted/30 p-3',
             )}
           >
+            {upstreamWebEmptyInput ? (
+              <p className="mb-2 text-[11px] leading-relaxed text-muted-foreground">
+                The compatible API runs this tool on the upstream model. The
+                stream often omits JSON arguments here (
+                <code className="rounded bg-muted px-1 font-mono text-[10px]">
+                  {'{}'}
+                </code>
+                ), while search/fetch still executes and the assistant gets
+                results on the next turn — expand{' '}
+                <span className="font-medium">Tool output</span> below for the
+                local stub, or rely on the assistant reply.
+              </p>
+            ) : null}
             <pre className="whitespace-pre-wrap break-words font-mono text-[11px] leading-relaxed text-muted-foreground">
-              {formatToolInputForDebug(args)}
+              {formatToolInputForDebug(args, toolName)}
             </pre>
           </div>
         </div>
@@ -342,7 +415,9 @@ function SingleGeneratedFileDownload({
           Download {filename ?? fileId}
         </span>
         {typeSubtitle && (
-          <span className="text-[10px] text-muted-foreground">{typeSubtitle}</span>
+          <span className="text-[10px] text-muted-foreground">
+            {typeSubtitle}
+          </span>
         )}
       </a>
     </div>
@@ -406,6 +481,9 @@ function PureToolCard({
     }
 
     if (typeof data === 'object') {
+      if (isFridaNormalizedWebToolResult(data)) {
+        return data.summary;
+      }
       // Try to find text content in common MCP result structures
       if (data.content && Array.isArray(data.content)) {
         return data.content
@@ -429,9 +507,7 @@ function PureToolCard({
   };
 
   const e2bScreenshot =
-    state === 'result' && isE2bDesktopScreenshotResult(result)
-      ? result
-      : null;
+    state === 'result' && isE2bDesktopScreenshotResult(result) ? result : null;
 
   const displayContent =
     e2bScreenshot != null
@@ -540,19 +616,21 @@ function PureToolCard({
 
   if (anthropicDelegated) {
     const skillLabel = humanizeSkillToolName(toolName);
+    const isWebTool = UPSTREAM_WEB_TOOL_NAMES.has(toolName);
 
     if (isLoading) {
       return (
         <div className="flex w-full flex-col gap-1">
-          <ToolInputDebugCollapsible args={args} />
+          <ToolInputDebugCollapsible args={args} toolName={toolName} />
           <Task className="w-full" defaultOpen>
-            <AnthropicSkillsTaskTrigger
-              title={`${skillLabel} — in progress`}
-            />
+            <AnthropicSkillsTaskTrigger title={`${skillLabel} — in progress`} />
             <TaskContent>
               <TaskItem>
-                Running code execution in the model environment; downloads appear
-                here when ready.
+                {isWebTool
+                  ? toolName === 'web_fetch'
+                    ? 'Fetching the URL on the upstream Anthropic-compatible API. Results are merged into the tool payload the model sees, same as bash/code execution passthrough.'
+                    : 'Searching the web on the upstream Anthropic-compatible API. Results are merged into the tool payload the model sees, same as bash/code execution passthrough.'
+                  : 'Running code execution in the model environment; downloads appear here when ready.'}
               </TaskItem>
             </TaskContent>
           </Task>
@@ -564,18 +642,21 @@ function PureToolCard({
       const detail = extractToolFailureDetail(result);
       return (
         <div className="flex w-full flex-col gap-1">
-          <ToolInputDebugCollapsible args={args} />
+          <ToolInputDebugCollapsible args={args} toolName={toolName} />
           <Task className="w-full" defaultOpen>
             <AnthropicSkillsTaskTrigger title={`${skillLabel} — failed`} />
             <TaskContent>
               <TaskItem className="text-destructive">
-                Something went wrong while running code execution (skills /
-                bash / editor). Check the reply above for details.
+                {isWebTool
+                  ? 'Web search or fetch failed on the upstream API. See the assistant reply above for details.'
+                  : 'Something went wrong while running code execution (skills / bash / editor). Check the reply above for details.'}
               </TaskItem>
               {detail ? (
                 <TaskItem className="border-t border-border/50 pt-2 text-xs text-muted-foreground">
                   <span className="font-medium text-foreground">Detail: </span>
-                  <span className="whitespace-pre-wrap font-mono">{detail}</span>
+                  <span className="whitespace-pre-wrap font-mono">
+                    {detail}
+                  </span>
                 </TaskItem>
               ) : null}
             </TaskContent>
@@ -584,17 +665,241 @@ function PureToolCard({
       );
     }
 
+    if (
+      isWebTool &&
+      state === 'result' &&
+      result != null &&
+      fileIds.length === 0
+    ) {
+      if (isFridaNormalizedWebToolResult(result)) {
+        const citationUrls = result.sources
+          .map((s) => s.url.trim())
+          .filter((u) => {
+            try {
+              const parsed = new URL(u);
+              return (
+                parsed.protocol === 'http:' || parsed.protocol === 'https:'
+              );
+            } catch {
+              return false;
+            }
+          });
+
+        const structuredUi = typeof result.headlineMarkdown === 'string';
+
+        const sourceRowsForUi =
+          result.detailHits && result.detailHits.length > 0
+            ? result.detailHits.map((h) => ({
+                url: h.url,
+                title: h.title,
+                page_age: h.page_age,
+              }))
+            : result.sources.map((s) => ({ url: s.url, title: s.title }));
+
+        return (
+          <div className="flex w-full flex-col gap-1">
+            <ToolInputDebugCollapsible args={args} toolName={toolName} />
+            <Task className="w-full" defaultOpen>
+              <AnthropicSkillsTaskTrigger title={`${skillLabel} — completed`} />
+              <TaskContent>
+                <TaskItem className="text-muted-foreground text-sm">
+                  Normalized web tool result: redacted, size-capped summary plus
+                  extracted links. The real search/fetch still runs on the
+                  upstream API.
+                </TaskItem>
+              </TaskContent>
+            </Task>
+            <div className="space-y-3 px-0 pt-1">
+              {structuredUi ? (
+                <>
+                  {sourceRowsForUi.length > 0 ? (
+                    <>
+                      <Sources className="mb-0 not-prose">
+                        <SourcesTrigger count={sourceRowsForUi.length} />
+                        <SourcesContent>
+                          <WebSourceUrlRows items={sourceRowsForUi} />
+                        </SourcesContent>
+                      </Sources>
+                      {citationUrls.length > 0 ? (
+                        <div className="not-prose flex flex-wrap items-center gap-2">
+                          <span className="text-muted-foreground text-xs">
+                            Preview
+                          </span>
+                          <InlineCitation className="inline-flex">
+                            <InlineCitationCard>
+                              <InlineCitationCardTrigger
+                                label={result.sources[0]?.title}
+                                sources={citationUrls}
+                              />
+                              <InlineCitationCardBody>
+                                <InlineCitationCarousel>
+                                  <InlineCitationCarouselHeader>
+                                    <InlineCitationCarouselPrev />
+                                    <InlineCitationCarouselNext />
+                                    <InlineCitationCarouselIndex />
+                                  </InlineCitationCarouselHeader>
+                                  <InlineCitationCarouselContent>
+                                    {result.sources.map((s, i) => (
+                                      <InlineCitationCarouselItem
+                                        key={`${s.url}-slide-${i}`}
+                                      >
+                                        <InlineCitationSource
+                                          title={s.title}
+                                          url={s.url}
+                                        />
+                                      </InlineCitationCarouselItem>
+                                    ))}
+                                  </InlineCitationCarouselContent>
+                                </InlineCitationCarousel>
+                              </InlineCitationCardBody>
+                            </InlineCitationCard>
+                          </InlineCitation>
+                        </div>
+                      ) : null}
+                    </>
+                  ) : null}
+                  <Response proseInvertInDark className="text-foreground">
+                    {result.headlineMarkdown}
+                  </Response>
+                  {result.detailsPlain &&
+                  !(result.detailHits && result.detailHits.length > 0) ? (
+                    <div className="not-prose space-y-1">
+                      <p className="text-muted-foreground text-xs font-medium">
+                        Details
+                      </p>
+                      <pre
+                        className={cn(
+                          'max-h-56 overflow-y-auto rounded-md border border-border/50 bg-muted/30 p-3',
+                          'whitespace-pre-wrap break-words font-mono text-[11px] leading-relaxed text-muted-foreground',
+                        )}
+                      >
+                        {result.detailsPlain}
+                      </pre>
+                    </div>
+                  ) : null}
+                </>
+              ) : (
+                <>
+                  <Response proseInvertInDark className="text-foreground">
+                    {result.summary}
+                  </Response>
+                  {result.sources.length > 0 ? (
+                    <>
+                      <Sources className="mb-0 not-prose">
+                        <SourcesTrigger count={result.sources.length} />
+                        <SourcesContent>
+                          <WebSourceUrlRows
+                            items={result.sources.map((s) => ({
+                              url: s.url,
+                              title: s.title,
+                            }))}
+                          />
+                        </SourcesContent>
+                      </Sources>
+                      {citationUrls.length > 0 ? (
+                        <div className="not-prose flex flex-wrap items-center gap-2">
+                          <span className="text-muted-foreground text-xs">
+                            Preview
+                          </span>
+                          <InlineCitation className="inline-flex">
+                            <InlineCitationCard>
+                              <InlineCitationCardTrigger
+                                label={result.sources[0]?.title}
+                                sources={citationUrls}
+                              />
+                              <InlineCitationCardBody>
+                                <InlineCitationCarousel>
+                                  <InlineCitationCarouselHeader>
+                                    <InlineCitationCarouselPrev />
+                                    <InlineCitationCarouselNext />
+                                    <InlineCitationCarouselIndex />
+                                  </InlineCitationCarouselHeader>
+                                  <InlineCitationCarouselContent>
+                                    {result.sources.map((s, i) => (
+                                      <InlineCitationCarouselItem
+                                        key={`${s.url}-slide-${i}`}
+                                      >
+                                        <InlineCitationSource
+                                          title={s.title}
+                                          url={s.url}
+                                        />
+                                      </InlineCitationCarouselItem>
+                                    ))}
+                                  </InlineCitationCarouselContent>
+                                </InlineCitationCarousel>
+                              </InlineCitationCardBody>
+                            </InlineCitationCard>
+                          </InlineCitation>
+                        </div>
+                      ) : null}
+                    </>
+                  ) : null}
+                </>
+              )}
+            </div>
+          </div>
+        );
+      }
+
+      const outputText = formatContent(result);
+      return (
+        <div className="flex w-full flex-col gap-1">
+          <ToolInputDebugCollapsible args={args} toolName={toolName} />
+          <Task className="w-full" defaultOpen>
+            <AnthropicSkillsTaskTrigger title={`${skillLabel} — completed`} />
+            <TaskContent>
+              <TaskItem className="text-muted-foreground text-sm">
+                Same passthrough pattern as code execution: the real run happens
+                upstream; this panel shows the mirrored tool result JSON for
+                debugging.
+              </TaskItem>
+            </TaskContent>
+          </Task>
+          {outputText ? (
+            <Collapsible defaultOpen={false} className="group space-y-0">
+              <div className="px-0 pb-0.5 pt-1 group-data-[state=closed]:px-1 group-data-[state=closed]:pb-2">
+                <CollapsibleTrigger
+                  className={cn(
+                    'group/trigger flex w-full items-center justify-between gap-2 rounded-md border border-border/50',
+                    'bg-muted/30 px-4 py-2.5 text-left text-xs font-medium text-muted-foreground',
+                    'hover:bg-muted/50 hover:text-foreground',
+                    'outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2',
+                  )}
+                >
+                  <span>Tool output</span>
+                  <ChevronDownIcon className="size-4 shrink-0 transition-transform group-data-[state=open]/trigger:rotate-180" />
+                </CollapsibleTrigger>
+              </div>
+              <CollapsibleContent className="outline-none data-[state=closed]:animate-out data-[state=open]:animate-in">
+                <div className="px-0 pb-1">
+                  <div
+                    className={cn(
+                      'max-h-56 overflow-y-auto rounded-md border border-border/50 bg-muted/30 p-3',
+                    )}
+                  >
+                    <pre className="whitespace-pre-wrap break-words font-mono text-[11px] leading-relaxed text-muted-foreground">
+                      {outputText}
+                    </pre>
+                  </div>
+                </div>
+              </CollapsibleContent>
+            </Collapsible>
+          ) : null}
+        </div>
+      );
+    }
+
     if (fileIds.length === 0) {
       return (
         <div className="flex w-full flex-col gap-1">
-          <ToolInputDebugCollapsible args={args} />
+          <ToolInputDebugCollapsible args={args} toolName={toolName} />
         </div>
       );
     }
 
     return (
       <div className="flex w-full flex-col gap-1">
-        <ToolInputDebugCollapsible args={args} />
+        <ToolInputDebugCollapsible args={args} toolName={toolName} />
         <Task className="w-full" defaultOpen>
           <AnthropicSkillsTaskTrigger
             title={`${skillLabel} — ${fileIds.length === 1 ? 'file ready' : 'files ready'}`}
@@ -662,7 +967,7 @@ function PureToolCard({
 
   return (
     <div className="flex w-full flex-col gap-3">
-      <ToolInputDebugCollapsible args={args} />
+      <ToolInputDebugCollapsible args={args} toolName={toolName} />
       <Card
         className={cn(
           'w-full transition-all duration-200 border',
@@ -743,45 +1048,45 @@ function PureToolCard({
               </CardContent>
             )}
             <Collapsible defaultOpen={false} className="group space-y-0">
-            <div
-              className={cn(
-                'px-6 pb-0.5',
-                'group-data-[state=closed]:px-7 group-data-[state=closed]:pb-3',
-              )}
-            >
-              <CollapsibleTrigger
+              <div
                 className={cn(
-                  'group/trigger flex w-full items-center justify-between gap-2 rounded-md border border-border/50',
-                  'bg-muted/30 px-4 py-2.5 text-left text-xs font-medium text-muted-foreground',
-                  'group-data-[state=closed]:px-5 group-data-[state=closed]:py-3.5',
-                  'hover:bg-muted/50 hover:text-foreground',
-                  'outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2',
+                  'px-6 pb-0.5',
+                  'group-data-[state=closed]:px-7 group-data-[state=closed]:pb-3',
                 )}
               >
-                <span>Tool output</span>
-                <ChevronDownIcon className="size-4 shrink-0 transition-transform group-data-[state=open]/trigger:rotate-180" />
-              </CollapsibleTrigger>
-            </div>
-            <CollapsibleContent
-              className={cn(
-                'data-[state=closed]:fade-out-0 data-[state=closed]:slide-out-to-top-2 data-[state=open]:slide-in-from-top-2',
-                'outline-none data-[state=closed]:animate-out data-[state=open]:animate-in',
-              )}
-            >
-              <CardContent className="pt-3">
-                <div
+                <CollapsibleTrigger
                   className={cn(
-                    'text-sm rounded-md p-4 max-h-48 overflow-y-auto',
-                    'bg-muted/50 border border-border/50',
+                    'group/trigger flex w-full items-center justify-between gap-2 rounded-md border border-border/50',
+                    'bg-muted/30 px-4 py-2.5 text-left text-xs font-medium text-muted-foreground',
+                    'group-data-[state=closed]:px-5 group-data-[state=closed]:py-3.5',
+                    'hover:bg-muted/50 hover:text-foreground',
+                    'outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2',
                   )}
                 >
-                  <pre className="whitespace-pre-wrap font-mono text-xs leading-relaxed">
-                    {displayContent}
-                  </pre>
-                </div>
-              </CardContent>
-            </CollapsibleContent>
-          </Collapsible>
+                  <span>Tool output</span>
+                  <ChevronDownIcon className="size-4 shrink-0 transition-transform group-data-[state=open]/trigger:rotate-180" />
+                </CollapsibleTrigger>
+              </div>
+              <CollapsibleContent
+                className={cn(
+                  'data-[state=closed]:fade-out-0 data-[state=closed]:slide-out-to-top-2 data-[state=open]:slide-in-from-top-2',
+                  'outline-none data-[state=closed]:animate-out data-[state=open]:animate-in',
+                )}
+              >
+                <CardContent className="pt-3">
+                  <div
+                    className={cn(
+                      'text-sm rounded-md p-4 max-h-48 overflow-y-auto',
+                      'bg-muted/50 border border-border/50',
+                    )}
+                  >
+                    <pre className="whitespace-pre-wrap font-mono text-xs leading-relaxed">
+                      {displayContent}
+                    </pre>
+                  </div>
+                </CardContent>
+              </CollapsibleContent>
+            </Collapsible>
           </>
         )}
       </Card>

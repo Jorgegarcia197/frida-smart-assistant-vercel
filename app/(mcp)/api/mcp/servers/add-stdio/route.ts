@@ -1,12 +1,12 @@
 import { type NextRequest, NextResponse } from 'next/server';
 import { getMcpClientInstance } from '@/lib/mcp/mcp-singleton-instance';
+import { requireSessionUserId } from '@/lib/mcp/require-session-user-id';
 
-export async function POST(request: NextRequest) {
+export async function POST(_request: NextRequest) {
   try {
-    const userId = request.headers.get('x-user-id');
-    if (!userId) {
-      return NextResponse.json({ error: 'User ID required' }, { status: 401 });
-    }
+    const authz = await requireSessionUserId();
+    if (!authz.ok) return authz.response;
+    const { userId } = authz;
 
     const mcpClient = getMcpClientInstance(userId);
     await mcpClient.addStdioServer();

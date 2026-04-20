@@ -100,6 +100,28 @@ export interface SystemPromptInput {
   forceNativeFileSkills?: boolean;
   /** Frida agent has `computer-use` enabled and E2B desktop tool is registered. */
   desktopComputerUseEnabled?: boolean;
+  /**
+   * Anthropic provider `web_search` + `web_fetch` tools are registered (OpenAI-compatible
+   * backend executes them server-side).
+   */
+  anthropicWebToolsEnabled?: boolean;
+  /** Conversation-scoped `memory` tool (Firebase-backed) is registered. */
+  memoryToolEnabled?: boolean;
+  /**
+   * Current memory entries for this chat, snapshotted at request time so the
+   * model can see what it already knows before calling `memory`.
+   */
+  memorySnapshot?: Array<{ key: string; value: string }>;
+  /**
+   * True when `ANTHROPIC_ENABLE_COMPACTION` is on for this deployment so we can
+   * explain context compaction vs the `memory` tool.
+   */
+  anthropicContextCompactionEnabled?: boolean;
+  /**
+   * `compact` caps the MCP tool bullet list to save definition tokens
+   * (`SYSTEM_PROMPT_DENSITY=compact` on the chat route).
+   */
+  systemPromptDensity?: 'full' | 'compact';
 }
 
 /**
@@ -140,6 +162,11 @@ export const buildSystemPromptSections = ({
   anthropicSkills,
   forceNativeFileSkills,
   desktopComputerUseEnabled,
+  anthropicWebToolsEnabled,
+  memoryToolEnabled,
+  memorySnapshot,
+  anthropicContextCompactionEnabled,
+  systemPromptDensity,
 }: SystemPromptInput): SystemPromptSection[] => {
   const requestPrompt = getRequestPromptFromHints(requestHints);
 
@@ -213,15 +240,34 @@ export const buildSystemPromptSections = ({
         }`
       : '';
 
+  const MCP_TOOL_LIST_COMPACT_CAP = 45;
+  const mcpToolBulletLines =
+    mcpToolNames && mcpToolNames.length > 0
+      ? (() => {
+          if (
+            systemPromptDensity === 'compact' &&
+            mcpToolNames.length > MCP_TOOL_LIST_COMPACT_CAP
+          ) {
+            const head = mcpToolNames
+              .slice(0, MCP_TOOL_LIST_COMPACT_CAP)
+              .map((n) => `- \`${n}\``)
+              .join('\n');
+            const rest = mcpToolNames.length - MCP_TOOL_LIST_COMPACT_CAP;
+            return `${head}\n- _(…and ${rest} more tools — use the exact id from your tool list when calling)_`;
+          }
+          return mcpToolNames.map((n) => `- \`${n}\``).join('\n');
+        })()
+      : '';
+
   const mcpToolsSection =
     mcpToolNames && mcpToolNames.length > 0
-      ? `Connected tools (MCP and/or HTTP APIs) — you MUST call them for any question that needs live data, database queries, inventory, customers, revenue, products, external APIs, or schemas. Do not say you lack access; use the tools first, then answer from the results.\nWhen the user asks to chart, visualize, or generate a diagram from data in an earlier turn, reuse the tool results already in this conversation — do NOT call MCP tools again just to produce a diagram or chart.\nFor every tool call, the \`arguments\` JSON must satisfy the tool schema (include every required field with real values). Never send an empty object \`{}\` or use template placeholder strings like \`<HOSTNAME>\`, \`<TAG_VALUE>\`, \`<SERVICE_NAME>\` — replace every placeholder with the actual value from context. Never call the same tool with the same arguments twice in one turn.${mcpCheckMkHint}\n${mcpToolNames.map((n) => `- \`${n}\``).join('\n')}${mcpSqlHints}`
+      ? `Connected tools (MCP and/or HTTP APIs) — you MUST call them for any question that needs live data, database queries, inventory, customers, revenue, products, external APIs, or schemas. Do not say you lack access; use the tools first, then answer from the results.\nWhen the user asks to chart, visualize, or generate a diagram from data in an earlier turn, reuse the tool results already in this conversation — do NOT call MCP tools again just to produce a diagram or chart.\nFor every tool call, the \`arguments\` JSON must satisfy the tool schema (include every required field with real values). Never send an empty object \`{}\` or use template placeholder strings like \`<HOSTNAME>\`, \`<TAG_VALUE>\`, \`<SERVICE_NAME>\` — replace every placeholder with the actual value from context. Never call the same tool with the same arguments twice in one turn.${mcpCheckMkHint}\n${mcpToolBulletLines}${mcpSqlHints}`
       : '';
 
   const anthropicSkillsSection = anthropicSkillsEnabled
     ? `Anthropic built-in file skills are available in this chat (via backend):
 - Available skills: ${(anthropicSkills && anthropicSkills.length > 0 ? anthropicSkills : ['pptx', 'docx', 'pdf', 'xlsx']).map((s) => `\`${s}\``).join(', ')}.
-- For requests that explicitly ask for native files such as PDF, PPTX, DOCX, or XLSX, you MUST use those built-in skills via code execution and produce the requested file.
+${anthropicWebToolsEnabled ? '- **Scope:** Code execution / bash here is for **generating or processing files** (PDF, PPTX, etc.) and running Python—not for **web search**. If the user wants to search the internet or read live pages, use \`web_search\` / \`web_fetch\` from the Web search section of this prompt, not bash \`echo\` or fake scripts.\n' : ''}- For requests that explicitly ask for native files such as PDF, PPTX, DOCX, or XLSX, you MUST use those built-in skills via code execution and produce the requested file.
 - Do NOT say these formats are unsupported and do NOT fall back to only \`createDocument\` HTML/Markdown artifacts when the user asked for a real file.
 - Prefer returning a generated downloadable file (via tool results / file IDs), then summarize what was created in chat.
 - **Single successful output (critical — avoids wasted tokens):** For one user request that asks for **one** deliverable file (e.g. one summary deck, one PDF), run code execution / bash **only until that file is successfully returned** in tool results, then **stop**. Do **not** re-run bash or code execution to export the **same** content again under another filename (e.g. \`1.pptx\`, \`2.pptx\`, copies "to verify", or duplicate saves). Do not chain extra tool rounds after success. Only run again if the **first** attempt **failed** with an error, or the user explicitly asked for **multiple distinct** files or a **revision** after feedback.`
@@ -233,6 +279,68 @@ export const buildSystemPromptSections = ({
 - Forbidden for this turn: \`createDocument\` / \`updateDocument\` as a replacement for PDF/PPTX/DOCX/XLSX output.
 - You must complete the request through Anthropic file skills + code execution and return file output.
 - After one successful file appears in tool results for this request, **do not** re-execute to produce duplicate copies of the same file.`
+    : '';
+
+  const anthropicWebToolsSection = anthropicWebToolsEnabled
+    ? `Web search and fetch (Anthropic — via backend):
+- You have \`web_search\` for **broad, up-to-date** information (news, facts after your knowledge cutoff, “what happened lately”, comparisons you cannot infer).
+- You have \`web_fetch\` when the user gives **specific URL(s)** or you need to **read a known page or document** — prefer fetch over search when the target URL is explicit.
+- **One web tool per question (default):** For open-ended discovery (“latest models”, “what’s new in 2026”, “current news”), call **only** \`web_search\` once. Do **not** chain \`web_fetch\` in the same turn unless the user **pasted http(s) URLs** or you must open **one** specific page they named. The backend may block the second tool after a successful search/fetch when URLs were not in the user message—plan accordingly.
+- Use these tools when the user asks for current events, live data, or page-specific content; cite or summarize what you found. Do not claim you cannot browse if these tools are available.
+- **Single source of truth after web tools:** If \`web_search\` / \`web_fetch\` returned substantive content, your **user-visible** answer must follow that tool result only—do **not** add a second section that lists “latest” models or dates from pre-training memory (that reads as two conflicting answers). One coherent reply.
+- **No duplicate answer bodies:** After tool results arrive, write **one** final answer. Do **not** repeat the same article twice with the same headings (e.g. two blocks both titled like “Anthropic Claude Models” with near-identical bullets). If you must correct an earlier sentence, add a **short** clarification—do not paste a second full duplicate list or table.
+- **No “fakeout then retract”:** If live excerpts are missing (delegation notice or empty payload), do **not** produce a long, specific list first and only then say it was made up. Lead with the limitation, then optionally give clearly labeled training-cutoff context. Never the reverse order in one reply.
+- If the tool result is only a **delegation / integration notice** with no excerpts, do **not** invent time-sensitive facts from memory to compensate; say results were not delivered to the client and suggest a URL to fetch or retry—avoid “helpful” hallucinated release lists.
+- **Mandatory routing (do not skip):** If the user asks to **search the web**, **look up** something **online**, **latest** / **newest** published models or news, or **current** facts beyond your training cutoff, you MUST call \`web_search\` (or \`web_fetch\` if they gave URLs). That is the only tool path that retrieves live web content here.
+- **Forbidden — never substitute code execution for browsing:** Do **not** use \`bash_code_execution\`, \`text_editor_code_execution\`, or \`code_execution\` to “simulate” a search (e.g. \`echo\`, printing placeholders, or empty scripts). That does **not** access the internet and is wrong when \`web_search\` / \`web_fetch\` exist. Code execution is for **Python/bash file skills and real computation**, not for pretending to search.
+- **Task checklist honesty:** If you use \`updateAgentTasks\`, mark a “search the web” step **completed** only after a real \`web_search\` or \`web_fetch\` tool call in this turn—not after bash echo output.
+- **Inline citations (client UI):** This app attaches numbered web sources in order. In your **final** user-visible reply, cite specific claims with bracketed references \`[1]\`, \`[2]\`, … where the number matches that order (first source returned = \`[1]\`). Prefer these brackets over long raw URLs in the prose when pointing at a source. Keep one coherent narrative—do not duplicate a second “here is the list again” section that conflicts with the bracket-cited body.
+- **Redacted / encrypted payloads (critical):** Provider snippets may show \`encrypted_content\` redacted in logs—that is **normal** and does **not** mean the search failed. If your tool result includes a **Sources** list and/or **Details** with titles, URLs, or page ages, treat the web call as **successful** and use that evidence. Do **not** apologize for “not searching,” “no results,” or “fabricating before searching” when \`web_search\` / \`web_fetch\` completed and those fields exist. Reserve apologies for real tool errors or when there are **no** URLs/titles at all—not for redaction alone.
+- **Org policy:** Web search must be allowed in the Anthropic account; if a tool error indicates search is disabled, say so briefly and answer from general knowledge with an appropriate caveat.`
+    : '';
+
+  const contextCompactionSection =
+    anthropicContextCompactionEnabled === true
+      ? `Context compaction (Anthropic — automatic on the server):
+- When this deployment has **context compaction** enabled, the service may **summarize earlier turns** in the long context window and surface a **conversation summary** in the transcript when input size crosses configured limits. That is **not** something you invoke with a tool; there is no client "run compaction" tool call.
+- If the user asks to **compact the conversation** or get a **summary of the thread** in the *windowing / context-length* sense, explain that **compaction with a summary** is applied by the platform when applicable—you do **not** replicate that by bulk-saving the entire chat via \`memory\`.`
+      : '';
+
+  const memorySection = memoryToolEnabled
+    ? (() => {
+        const intro = [
+          'Conversation memory tool (`memory`):',
+          '- You have a `memory` tool backed by this conversation\'s storage (survives reloads). Call it with `action`: `list` / `read` / `create` / `update` / `delete`.',
+          '- **When to call it:** only when **you judge something is worth persisting** for later turns—stable user facts, preferences, constraints, decisions, or facts you must recall in follow-ups. Skip trivial chat, redundant saves, or dumping the full transcript unless the user **explicitly** asks you to store curated notes under keys.',
+          '- Prefer short snake_case keys (e.g. `user_name`, `current_task`, `report_topic`). Values are free-form text. Do NOT store secrets or credentials.',
+          anthropicContextCompactionEnabled === true
+            ? '- **Do not** use `memory` to stand in for **context compaction** (see Context compaction above). Saving two large "summary of everything" blobs after a user says "compact" is usually wrong unless they clearly want **named, durable notes** in memory.'
+            : '- **Do not** treat vague "compact this chat" requests as a signal to fill `memory` with a whole-thread paste; context-window summarization (when enabled on the server) is separate from key/value memory.',
+          '- Check the memories injected below or call `list` before creating duplicate keys.',
+        ].join('\n');
+
+        const entries = memorySnapshot ?? [];
+        if (entries.length === 0) {
+          return `${intro}\n\nCurrent memories: (none yet)`;
+        }
+
+        const rendered = entries
+          .slice(0, 50)
+          .map((entry) => {
+            const value = entry.value.length > 500
+              ? `${entry.value.slice(0, 500)}…`
+              : entry.value;
+            return `- \`${entry.key}\`: ${value}`;
+          })
+          .join('\n');
+
+        const truncatedHint =
+          entries.length > 50
+            ? `\n(Showing 50 of ${entries.length}. Use \`memory\` with \`action: "list"\` to see all.)`
+            : '';
+
+        return `${intro}\n\nCurrent memories:\n${rendered}${truncatedHint}`;
+      })()
     : '';
 
   const desktopComputerUseSection = desktopComputerUseEnabled
@@ -248,7 +356,7 @@ export const buildSystemPromptSections = ({
     selectedChatModel === 'chat-model-reasoning'
       ? `Reasoning + tools:\nInternal reasoning is for planning only. When the rules above require \`createDocument\`, \`createMermaidDiagram\`, \`createIshikawaDiagram\`, \`updateDocument\`, MCP tools,${
           desktopComputerUseEnabled ? ' E2B desktop computer-use,' : ''
-        } or other registered tools, you must still **call those tools** in this turn—do not answer with reasoning plus prose alone when a tool is required.`
+        }${anthropicWebToolsEnabled ? ' \`web_search\` / \`web_fetch\` (for live web data—never use bash/code execution to fake a search),' : ''} or other registered tools, you must still **call those tools** in this turn—do not answer with reasoning plus prose alone when a tool is required.`
       : '';
 
   // Artifacts + createDocument must apply to every chat model (including reasoning);
@@ -262,7 +370,14 @@ export const buildSystemPromptSections = ({
     { id: 'mcpTools', kind: 'dynamic', content: mcpToolsSection },
     { id: 'anthropicSkills', kind: 'dynamic', content: anthropicSkillsSection },
     { id: 'nativeFileMode', kind: 'dynamic', content: nativeFileModeSection },
+    { id: 'anthropicWebTools', kind: 'dynamic', content: anthropicWebToolsSection },
     { id: 'desktopComputerUse', kind: 'dynamic', content: desktopComputerUseSection },
+    {
+      id: 'contextCompaction',
+      kind: 'dynamic',
+      content: contextCompactionSection,
+    },
+    { id: 'memory', kind: 'dynamic', content: memorySection },
     { id: 'tasks', kind: 'static', content: tasksSection },
     { id: 'generativeUi', kind: 'static', content: generativeUiPromptSection },
     { id: 'reasoningModel', kind: 'dynamic', content: reasoningModelSection },

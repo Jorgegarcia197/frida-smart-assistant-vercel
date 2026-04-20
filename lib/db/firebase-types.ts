@@ -1,4 +1,5 @@
 import type { VisibilityType } from '@/components/visibility-selector';
+import type { LanguageModelUsage } from 'ai';
 
 // User collection document
 export interface User {
@@ -41,6 +42,8 @@ export interface DBMessage {
   parts: any;
   attachments: LegacyAttachment[];
   createdAt: Date;
+  /** Last completion usage for assistant turns; used by context UI after reload */
+  usage?: LanguageModelUsage;
 
   // There are some documents that reference experimental_attachments
   experimental_attachments?: LegacyAttachment[];

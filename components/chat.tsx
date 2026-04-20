@@ -19,13 +19,25 @@ import { useSearchParams } from 'next/navigation';
 import { useChatVisibility } from '@/hooks/use-chat-visibility';
 import { useAutoResume } from '@/hooks/use-auto-resume';
 import { ChatSDKError } from '@/lib/errors';
-import type { Attachment, ChatMessage, CustomUIDataTypes } from '@/lib/types';
+import type {
+  Attachment,
+  ChatContextPayloadStreamData,
+  ChatMessage,
+  CustomUIDataTypes,
+} from '@/lib/types';
 import { useDataStream } from './data-stream-provider';
 import { DefaultChatTransport, type DataUIPart } from 'ai';
 import { useAgentForChat } from './agent-provider';
 
-function isSpecDataPart(part: { type: string }): part is DataUIPart<CustomUIDataTypes> {
-  return part.type === 'data-spec';
+/**
+ * Record every custom data chunk from the UI message stream (artifact deltas, json-render spec,
+ * appendMessage, etc.). Previously only `data-spec` was stored, so createDocument streaming never
+ * updated the artifact and the preview stayed on the skeleton until the DB fetch completed.
+ */
+function isDataStreamUIPart(
+  part: { type: string },
+): part is DataUIPart<CustomUIDataTypes> {
+  return part.type.startsWith('data-');
 }
 
 /** Match server + ModelSelector; avoids stale `initialChatModel` after client-side model change. */
@@ -147,8 +159,33 @@ export function Chat({
       },
     }),
     onData: (dataPart) => {
-      if (isSpecDataPart(dataPart)) {
-        setDataStream((ds) => (ds ? [...ds, dataPart] : []));
+      if (dataPart.type === 'data-context-payload-estimate') {
+        const d = dataPart.data;
+        if (
+          d &&
+          typeof d === 'object' &&
+          typeof (d as ChatContextPayloadStreamData).chatId === 'string' &&
+          (d as ChatContextPayloadStreamData).chatId === id &&
+          typeof (d as ChatContextPayloadStreamData).triggerMessageId ===
+            'string' &&
+          typeof (d as ChatContextPayloadStreamData).approxInputTokens ===
+            'number'
+        ) {
+          setContextPayloadFromServer(d as ChatContextPayloadStreamData);
+        }
+        return;
+      }
+      if (dataPart.type === 'data-context-trim-notice') {
+        toast({
+          type: 'success',
+          description:
+            typeof dataPart.data === 'string'
+              ? dataPart.data
+              : 'Context was trimmed automatically; re-run tools if needed.',
+        });
+      }
+      if (isDataStreamUIPart(dataPart)) {
+        setDataStream((ds) => [...ds, dataPart]);
       }
     },
     onFinish: () => {
@@ -163,6 +200,9 @@ export function Chat({
       }
     },
   });
+
+  const [contextPayloadFromServer, setContextPayloadFromServer] =
+    useState<ChatContextPayloadStreamData | null>(null);
 
   const searchParams = useSearchParams();
   const query = searchParams.get('query');
@@ -222,6 +262,7 @@ export function Chat({
             <MultimodalInput
               attachments={attachments}
               chatId={id}
+              contextPayloadFromServer={contextPayloadFromServer}
               input={input}
               messages={messages}
               selectedModelId={initialChatModel}

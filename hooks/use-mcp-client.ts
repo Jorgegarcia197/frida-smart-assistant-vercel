@@ -36,7 +36,6 @@ export function useMcpClient(userId: string): UseMcpClientReturn {
         ...options,
         headers: {
           'Content-Type': 'application/json',
-          'x-user-id': userId,
           ...options.headers,
         },
       });
@@ -48,7 +47,7 @@ export function useMcpClient(userId: string): UseMcpClientReturn {
 
       return response.json();
     },
-    [userId],
+    [],
   );
 
   const getServers = useCallback(async () => {

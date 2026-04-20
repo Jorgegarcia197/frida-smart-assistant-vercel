@@ -1,6 +1,7 @@
 /**
  * Merges optional server env fallbacks into agent MCP config.
  * - `MCP_SSE_URL` / `MCP_X_API_KEY`: only used when the agent omits `url` / `x-api-key`.
+ *   `MCP_SSE_URL` must satisfy the same rules as user MCP URLs (**HTTPS**, no private hosts); see `assertSafeMcpRemoteUrl`.
  * - DB headers (`x-db-url`, `x-db-host`, …) are **passed through** by default so the MCP
  *   server can connect to the database (many MCPs require them on each request).
  * - Set `MCP_STRIP_DB_HEADERS=true` if the DB is configured only on the MCP container

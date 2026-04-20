@@ -1,12 +1,13 @@
 'use client';
 
-import type { UIMessage } from 'ai';
+import type { LanguageModelUsage, UIMessage } from 'ai';
 import type React from 'react';
 import {
   useRef,
   useEffect,
   useState,
   useCallback,
+  useMemo,
   type ClipboardEvent,
   type Dispatch,
   type SetStateAction,
@@ -28,7 +29,7 @@ import { useScrollToBottom } from '@/hooks/use-scroll-to-bottom';
 import type { VisibilityType } from './visibility-selector';
 import MCPHubContent from './mcp-hub-content';
 import LoadAgentContent from './load-agent-content';
-import type { ChatMessage } from '@/lib/types';
+import type { ChatContextPayloadStreamData, ChatMessage } from '@/lib/types';
 import type { LegacyAttachment } from '@/lib/db/firebase-types';
 import SidebarPortal from './sidebar-portal';
 import {
@@ -39,6 +40,29 @@ import {
   PromptInputTools,
 } from './elements/prompt-input';
 import { Attachments } from './elements/attachments';
+import {
+  Context,
+  ContextCacheUsage,
+  ContextContent,
+  ContextContentBody,
+  ContextContentFooter,
+  ContextContentHeader,
+  ContextInputUsage,
+  ContextOutputUsage,
+  ContextReasoningUsage,
+  ContextTrigger,
+} from '@/components/ai-elements/context';
+import { estimateChatContextFromUiMessages } from '@/lib/ai/chat-context-estimate';
+import { getChatModelContextWindow } from '@/lib/ai/context-window';
+import { trimUiMessagesForModel } from '@/lib/ai/trim-ui-messages-for-model';
+import { getUsage } from 'tokenlens';
+
+function lastUserMessageId(msgs: ChatMessage[]): string | undefined {
+  for (let i = msgs.length - 1; i >= 0; i--) {
+    const m = msgs[i];
+    if (m?.role === 'user') return m.id;
+  }
+}
 
 function PureMultimodalInput({
   chatId,
@@ -54,6 +78,7 @@ function PureMultimodalInput({
   className,
   selectedVisibilityType,
   selectedModelId,
+  contextPayloadFromServer = null,
 }: {
   chatId: string;
   sendMessage: UseChatHelpers<ChatMessage>['sendMessage'];
@@ -68,6 +93,8 @@ function PureMultimodalInput({
   className?: string;
   selectedVisibilityType: VisibilityType;
   selectedModelId: string;
+  /** Latest `/api/chat` payload estimate + trim meta (stream start). */
+  contextPayloadFromServer?: ChatContextPayloadStreamData | null;
 }) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const { width } = useWindowSize();
@@ -122,6 +149,95 @@ function PureMultimodalInput({
 
   const { hasConversationStarted, setHasConversationStarted } =
     useAgentForChat(chatId);
+
+  /**
+   * Merge usage across the session: **input/cache** stay from the **latest**
+   * assistant turn (current context window). **Output** and **reasoning** are
+   * **summed** across all assistant messages with persisted usage so refresh
+   * matches a full-session view instead of only the last reply.
+   */
+  const contextUsage = useMemo((): LanguageModelUsage | undefined => {
+    const perTurn: LanguageModelUsage[] = [];
+    for (let i = 0; i < messages.length; i++) {
+      const m = messages[i] as ChatMessage;
+      if (m.role === 'assistant' && m.metadata?.usage) {
+        perTurn.push(m.metadata.usage);
+      }
+    }
+    if (perTurn.length === 0) return undefined;
+
+    const latest = perTurn[perTurn.length - 1];
+    let sumOutput = 0;
+    let sumReasoning = 0;
+    for (const u of perTurn) {
+      sumOutput += u.outputTokens ?? 0;
+      sumReasoning += u.reasoningTokens ?? 0;
+    }
+
+    const merged: LanguageModelUsage = {
+      ...latest,
+      outputTokens: sumOutput,
+      ...(sumReasoning > 0 ? { reasoningTokens: sumReasoning } : {}),
+    };
+    return merged;
+  }, [messages]);
+
+  /**
+   * While streaming/submitted: same number as server `DEBUG_CHAT_CONTEXT_SIZE` for this
+   * request (post expand + microcompact). When idle: client trim using last stream’s trim meta
+   * (file expansion still server-only).
+   */
+  const usedContextTokens = useMemo(() => {
+    const msgs = messages as ChatMessage[];
+    const busy = status === 'streaming' || status === 'submitted';
+    const tailUserId = lastUserMessageId(msgs);
+    if (
+      busy &&
+      contextPayloadFromServer &&
+      tailUserId != null &&
+      contextPayloadFromServer.triggerMessageId === tailUserId
+    ) {
+      return contextPayloadFromServer.approxInputTokens;
+    }
+    if (busy) {
+      return estimateChatContextFromUiMessages(
+        trimUiMessagesForModel(msgs, {
+          preset: 'microcompact',
+          keepRecentMessages: 24,
+        }),
+      ).approxInputTokens;
+    }
+    const trimmed =
+      contextPayloadFromServer?.microcompactEnabled === true
+        ? trimUiMessagesForModel(msgs, {
+            preset: 'microcompact',
+            keepRecentMessages:
+              contextPayloadFromServer.keepRecentMessages ?? 24,
+            allowToolSubstrings: contextPayloadFromServer.allowToolSubstrings,
+          })
+        : msgs;
+    return estimateChatContextFromUiMessages(trimmed).approxInputTokens;
+  }, [messages, status, contextPayloadFromServer]);
+
+  const sessionCostUsd = useMemo(() => {
+    let total = 0;
+    for (let i = 0; i < messages.length; i++) {
+      const m = messages[i] as ChatMessage;
+      if (m.role !== 'assistant' || !m.metadata?.usage) continue;
+      const u = m.metadata.usage;
+      const inp = u.inputTokens ?? 0;
+      const out = u.outputTokens ?? 0;
+      if (inp === 0 && out === 0) continue;
+      const c = getUsage({
+        modelId: selectedModelId,
+        usage: { input: inp, output: out },
+      }).costUSD?.totalUSD;
+      if (typeof c === 'number' && Number.isFinite(c)) total += c;
+    }
+    return total;
+  }, [messages, selectedModelId]);
+
+  const maxContextTokens = Math.max(1, getChatModelContextWindow(selectedModelId));
 
   const submitForm = useCallback(() => {
     window.history.replaceState({}, '', `/chat/${chatId}`);
@@ -418,6 +534,37 @@ function PureMultimodalInput({
           <PromptInputTools className="gap-2">
             <AttachmentsButton fileInputRef={fileInputRef} status={status} />
 
+            <Context
+              usedTokens={usedContextTokens}
+              maxTokens={maxContextTokens}
+              usage={contextUsage}
+              modelId={selectedModelId}
+              meterCaption="Ring: server payload estimate while sending (matches DEBUG log); after reply, client re-trim using last server settings (expand stays server-only). Rows: provider usage."
+            >
+              <ContextTrigger
+                className="rounded-md rounded-bl-lg p-[7px] h-fit dark:border-zinc-700 hover:dark:bg-zinc-900 hover:bg-zinc-200"
+                disabled={isModelBusy}
+              />
+              <ContextContent align="start" className="w-72" side="top">
+                <ContextContentHeader />
+                <ContextContentBody className="space-y-1.5">
+                  <ContextInputUsage />
+                  <ContextOutputUsage />
+                  <ContextReasoningUsage />
+                  <ContextCacheUsage />
+                </ContextContentBody>
+                <ContextContentFooter>
+                  <span className="text-muted-foreground">Session cost (est.)</span>
+                  <span>
+                    {new Intl.NumberFormat('en-US', {
+                      currency: 'USD',
+                      style: 'currency',
+                    }).format(sessionCostUsd)}
+                  </span>
+                </ContextContentFooter>
+              </ContextContent>
+            </Context>
+
             <Button
               variant="ghost"
               className="rounded-md rounded-bl-lg p-[7px] h-fit dark:border-zinc-700 hover:dark:bg-zinc-900 hover:bg-zinc-200"
@@ -487,6 +634,10 @@ export const MultimodalInput = memo(
     if (prevProps.selectedVisibilityType !== nextProps.selectedVisibilityType)
       return false;
     if (prevProps.chatId !== nextProps.chatId) return false;
+    if (prevProps.selectedModelId !== nextProps.selectedModelId) return false;
+    if (!equal(prevProps.messages, nextProps.messages)) return false;
+    if (!equal(prevProps.contextPayloadFromServer, nextProps.contextPayloadFromServer))
+      return false;
 
     return true;
   },

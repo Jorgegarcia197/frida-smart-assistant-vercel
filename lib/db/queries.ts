@@ -546,7 +546,7 @@ export async function saveMessages({
 
       const sanitizedMessage = stripUndefinedDeep(message);
 
-      batch.set(messageRef, sanitizedMessage);
+      batch.set(messageRef, sanitizedMessage, { merge: true });
     });
 
     await batch.commit();
@@ -810,6 +810,40 @@ export async function getSuggestionsByDocumentId({
 }
 
 // Additional operations
+export async function deleteMessagesByChatIdWhereCreatedAtBefore({
+  chatId,
+  before,
+}: {
+  chatId: string;
+  before: Date;
+}) {
+  try {
+    const snapshot = await db
+      .collection('chats')
+      .doc(chatId)
+      .collection('messages')
+      .where('createdAt', '<', dateToTimestamp(before))
+      .get();
+
+    const BATCH = 450;
+    const refs = snapshot.docs.map((d) => d.ref);
+    for (let i = 0; i < refs.length; i += BATCH) {
+      const batch = db.batch();
+      for (const ref of refs.slice(i, i + BATCH)) {
+        batch.delete(ref);
+      }
+      await batch.commit();
+    }
+
+    return refs.length;
+  } catch (error) {
+    throw new ChatSDKError(
+      'bad_request:database',
+      'Failed to delete messages before cutoff',
+    );
+  }
+}
+
 export async function deleteMessagesByChatIdAfterTimestamp({
   chatId,
   timestamp,

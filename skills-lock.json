@@ -25,6 +25,21 @@
       "source": "aradotso/trending-skills",
       "sourceType": "github",
       "computedHash": "cd0aa442427b8ccb91b1c490188fa0a891fbc0b2b38fdcf7b0957c61064d94ab"
+    },
+    "next-best-practices": {
+      "source": "vercel-labs/next-skills",
+      "sourceType": "github",
+      "computedHash": "db85045827ebeb83ac8dbc992b69188755eeb74dcf01cbf5e694d58aa494a106"
+    },
+    "vulnerability-scanner": {
+      "source": "sickn33/antigravity-awesome-skills",
+      "sourceType": "github",
+      "computedHash": "d457720ffbf8f1245e387b38f006a041e6c130e3434bb5b6a92b0be072409c3b"
+    },
+    "vulnerability-scanning": {
+      "source": "secondsky/claude-skills",
+      "sourceType": "github",
+      "computedHash": "4c526a9b8243f325f1c98e6bc0813bba406b3cb786cec16f7d2c42ae3db7c6b3"
     }
   }
 }

@@ -1,12 +1,12 @@
 import { type NextRequest, NextResponse } from 'next/server';
 import { getMcpClientInstance } from '@/lib/mcp/mcp-singleton-instance';
+import { requireSessionUserId } from '@/lib/mcp/require-session-user-id';
 
-export async function GET(request: NextRequest) {
+export async function GET(_request: NextRequest) {
   try {
-    const userId = request.headers.get('x-user-id'); // or get from auth
-    if (!userId) {
-      return NextResponse.json({ error: 'User ID required' }, { status: 401 });
-    }
+    const authz = await requireSessionUserId();
+    if (!authz.ok) return authz.response;
+    const { userId } = authz;
 
     console.log(`[MCP API] Getting servers for user: ${userId}`);
     const mcpClient = getMcpClientInstance(userId);

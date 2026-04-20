@@ -80,8 +80,17 @@ export function DocumentPreview({
     }
   }
 
-  if (isDocumentsFetching) {
-    return <LoadingSkeleton artifactKind={result.kind ?? args.kind} />;
+  // While SWR loads, prefer streamed artifact content so the panel does not flash skeleton after
+  // generation completes but before the document API responds.
+  if (isDocumentsFetching && !previewDocument) {
+    const hasStreamingArtifact =
+      result &&
+      artifact.documentId === result.id &&
+      (artifact.status === 'streaming' || artifact.content.length > 0);
+
+    if (!hasStreamingArtifact) {
+      return <LoadingSkeleton artifactKind={result.kind ?? args.kind} />;
+    }
   }
 
   const document: Document | null = previewDocument

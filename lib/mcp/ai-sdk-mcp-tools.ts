@@ -24,6 +24,7 @@ import { dynamicTool } from 'ai';
 import { z } from 'zod/v3';
 
 import type { McpTransportType } from '@/lib/mcp/types';
+import { assertSafeMcpRemoteUrl } from '@/lib/mcp/safe-mcp-remote-url';
 
 const MCP_LOG_MAX_CHARS = 12_000;
 
@@ -305,6 +306,16 @@ export async function collectAiSdkMcpTools(
     if (cfg.disabled === true) continue;
 
     const url = String(cfg.url).trim();
+    try {
+      assertSafeMcpRemoteUrl(url);
+    } catch (e) {
+      console.error(
+        `[AI SDK MCP] Rejected unsafe URL for "${serverName}":`,
+        e instanceof Error ? e.message : e,
+      );
+      continue;
+    }
+
     const env = (cfg.env as Record<string, string> | undefined) ?? {};
     const headers: Record<string, string> = { ...env };
 

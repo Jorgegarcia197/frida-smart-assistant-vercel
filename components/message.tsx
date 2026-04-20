@@ -16,6 +16,8 @@ import { Tooltip, TooltipContent, TooltipTrigger } from './ui/tooltip';
 import { MessageEditor } from './message-editor';
 import { DocumentPreview } from './document-preview';
 import { MessageReasoning } from './message-reasoning';
+import { CompactionSummary } from './compaction-summary';
+import { MemoryToolDisplay } from './memory-tool-display';
 import type { UseChatHelpers } from '@ai-sdk/react';
 import { ToolCard } from './tool-card';
 import type { ChatMessage } from '@/lib/types';
@@ -41,6 +43,14 @@ import { useDataStream } from './data-stream-provider';
 import { buildSpecFromParts } from '@json-render/react';
 import { GenerativeUIRenderer } from '@/components/json-render/generative-ui-renderer';
 import { specHasMissingChildReferences } from '@/lib/json-render/spec-has-missing-children';
+import {
+  AssistantTextWithBracketRefs,
+  shouldUseBracketCitationRendering,
+} from '@/components/assistant-bracket-citations';
+import {
+  collectOrderedSourceUrls,
+  MessageSources,
+} from '@/components/message-sources';
 
 /**
  * MCP tools use `server__tool` ids from @ai-sdk/mcp (`collectAiSdkMcpTools`). Agent custom HTTP
@@ -72,16 +82,102 @@ function splitDynamicToolDisplayName(fullName: string): {
   return { serverName: 'API', shortToolName: fullName, toolSource: 'api' };
 }
 
-/** Anthropic skills passthrough tools from `createAnthropicSkillsPassthroughTools` (dynamicTool). */
+/**
+ * Anthropic passthrough tools: same pattern as `createAnthropicSkillsPassthroughTools`
+ * (dynamicTool) — real work runs upstream; local `execute` mirrors JSON. These use
+ * the Task-style ToolCard (`anthropicDelegated`): code execution + file downloads,
+ * or web_search / web_fetch (upstream API, optional tool output panel).
+ */
 const ANTHROPIC_DELEGATED_TOOL_NAMES = new Set([
   'text_editor_code_execution',
   'bash_code_execution',
   'code_execution',
+  'web_search',
+  'web_fetch',
+  '$BUILT_IN_WEB_SEARCH',
 ]);
 
 function isAnthropicDelegatedToolName(fullToolName: string): boolean {
   const { shortToolName } = splitDynamicToolDisplayName(fullToolName);
   return ANTHROPIC_DELEGATED_TOOL_NAMES.has(shortToolName);
+}
+
+/** Web tools we surface before other assistant parts (after reasoning) so the UI reads search → answer. */
+const ASSISTANT_WEB_TOOL_SHORT = new Set([
+  'web_search',
+  'web_fetch',
+  '$BUILT_IN_WEB_SEARCH',
+]);
+
+function isAssistantWebToolPart(part: ChatMessage['parts'][number]): boolean {
+  if (part.type !== 'dynamic-tool') return false;
+  const p = part as { toolName?: string };
+  if (typeof p.toolName !== 'string') return false;
+  const { shortToolName } = splitDynamicToolDisplayName(p.toolName);
+  return ASSISTANT_WEB_TOOL_SHORT.has(shortToolName);
+}
+
+function assistantPartDisplayRank(part: ChatMessage['parts'][number]): number {
+  if (part.type === 'reasoning') return 0;
+  if (isAssistantWebToolPart(part)) return 1;
+  return 2;
+}
+
+/**
+ * Anthropic's context-management `compact_20260112` edit emits a summary
+ * block. Depending on how the gateway forwards it, the summary may arrive:
+ *
+ * 1. As a text part with `providerMetadata.anthropic.type === 'compaction'`
+ *    (preferred, structured path).
+ * 2. As a text part whose body starts with a `[compaction-summary]` marker
+ *    line the gateway prepends (fallback when metadata isn't forwarded).
+ *
+ * Both shapes are mapped to the same `CompactionSummary` UI.
+ */
+function extractCompactionFromTextPart(part: {
+  text?: string;
+  providerMetadata?: unknown;
+}): {
+  text: string;
+  meta?: { originalTokens?: number; compactedTokens?: number };
+} | null {
+  const rawMeta =
+    part.providerMetadata && typeof part.providerMetadata === 'object'
+      ? ((part.providerMetadata as Record<string, unknown>).anthropic as
+          | Record<string, unknown>
+          | undefined)
+      : undefined;
+
+  if (rawMeta && rawMeta.type === 'compaction') {
+    const originalTokens =
+      typeof rawMeta.originalTokens === 'number'
+        ? rawMeta.originalTokens
+        : typeof rawMeta.original_tokens === 'number'
+          ? (rawMeta.original_tokens as number)
+          : undefined;
+    const compactedTokens =
+      typeof rawMeta.compactedTokens === 'number'
+        ? rawMeta.compactedTokens
+        : typeof rawMeta.compacted_tokens === 'number'
+          ? (rawMeta.compacted_tokens as number)
+          : undefined;
+    return {
+      text: part.text ?? '',
+      meta:
+        originalTokens != null || compactedTokens != null
+          ? { originalTokens, compactedTokens }
+          : undefined,
+    };
+  }
+
+  const text = part.text ?? '';
+  // Marker fallback — supports streaming: body may grow after the first line.
+  if (/^\s*\[compaction-summary\]/i.test(text)) {
+    const rest = text.replace(/^\s*\[compaction-summary\][^\n]*\n?/i, '');
+    return { text: rest };
+  }
+
+  return null;
 }
 
 function isAnthropicCodeExecutionToolType(type: string): boolean {
@@ -125,7 +221,9 @@ function normalizeAgentTaskItems(value: unknown): AgentTaskItem[] {
       }
 
       const title =
-        'title' in item && typeof item.title === 'string' ? item.title.trim() : '';
+        'title' in item && typeof item.title === 'string'
+          ? item.title.trim()
+          : '';
       const status = 'status' in item ? item.status : undefined;
 
       if (
@@ -227,6 +325,29 @@ const PurePreviewMessage = ({
     return last;
   }, [message.parts]);
 
+  const orderedAssistantSourceUrls = useMemo(
+    () => collectOrderedSourceUrls(message),
+    [message],
+  );
+
+  const displayParts = useMemo(() => {
+    const parts = message.parts;
+    if (!parts?.length) {
+      return [] as Array<{ p: ChatMessage['parts'][number]; i: number }>;
+    }
+    if (message.role !== 'assistant') {
+      return parts.map((p, i) => ({ p, i }));
+    }
+    return [...parts]
+      .map((p, i) => ({ p, i }))
+      .sort((a, b) => {
+        const ra = assistantPartDisplayRank(a.p);
+        const rb = assistantPartDisplayRank(b.p);
+        if (ra !== rb) return ra - rb;
+        return a.i - b.i;
+      });
+  }, [message.parts, message.role]);
+
   return (
     <AnimatePresence>
       <motion.div
@@ -277,9 +398,20 @@ const PurePreviewMessage = ({
               </Attachments>
             )}
 
-            {message.parts?.map((part, index) => {
+            {message.role === 'assistant' && (
+              <MessageSources message={message} />
+            )}
+
+            {displayParts.map(({ p: part, i: index }) => {
               const { type } = part;
               const key = `message-${message.id}-part-${index}`;
+
+              if (
+                message.role === 'assistant' &&
+                (type === 'source-url' || type === 'source-document')
+              ) {
+                return null;
+              }
 
               if (type === 'reasoning' && part.text?.trim().length > 0) {
                 return (
@@ -310,6 +442,24 @@ const PurePreviewMessage = ({
               }
 
               if (type === 'text') {
+                const compaction =
+                  message.role === 'assistant'
+                    ? extractCompactionFromTextPart(part as any)
+                    : null;
+                if (compaction) {
+                  const isLastPart = index === (message.parts?.length ?? 0) - 1;
+                  const compactionStreaming =
+                    isLoading && message.role === 'assistant' && isLastPart;
+                  return (
+                    <CompactionSummary
+                      key={key}
+                      text={compaction.text}
+                      meta={compaction.meta}
+                      isStreaming={compactionStreaming}
+                    />
+                  );
+                }
+
                 if (mode === 'view') {
                   return (
                     <div key={key} className="flex flex-row gap-2 items-start">
@@ -339,16 +489,28 @@ const PurePreviewMessage = ({
                           'bg-transparent -ml-4': message.role === 'assistant',
                         })}
                       >
-                        <Response
-                          proseInvertInDark={message.role !== 'user'}
-                          className={
-                            message.role === 'user'
-                              ? 'text-primary-foreground [&_*]:text-primary-foreground'
-                              : undefined
-                          }
-                        >
-                          {sanitizeText(part.text)}
-                        </Response>
+                        {message.role === 'assistant' &&
+                        shouldUseBracketCitationRendering(
+                          part.text ?? '',
+                          orderedAssistantSourceUrls,
+                        ) ? (
+                          <AssistantTextWithBracketRefs
+                            text={part.text ?? ''}
+                            sources={orderedAssistantSourceUrls}
+                            proseInvertInDark
+                          />
+                        ) : (
+                          <Response
+                            proseInvertInDark={message.role !== 'user'}
+                            className={
+                              message.role === 'user'
+                                ? 'text-primary-foreground [&_*]:text-primary-foreground'
+                                : undefined
+                            }
+                          >
+                            {sanitizeText(part.text)}
+                          </Response>
+                        )}
                       </MessageContent>
                     </div>
                   );
@@ -528,12 +690,18 @@ const PurePreviewMessage = ({
                   state === 'output-available' ? part.output : part.input;
                 const taskTitle = getTaskTitleFromValue(sourceValue);
                 const taskItems =
-                  sourceValue && typeof sourceValue === 'object' && 'items' in sourceValue
+                  sourceValue &&
+                  typeof sourceValue === 'object' &&
+                  'items' in sourceValue
                     ? normalizeAgentTaskItems(sourceValue.items)
                     : [];
 
                 return (
-                  <ChainOfThought key={toolCallId} className="w-full" defaultOpen={true}>
+                  <ChainOfThought
+                    key={toolCallId}
+                    className="w-full"
+                    defaultOpen={true}
+                  >
                     <ChainOfThoughtHeader>{taskTitle}</ChainOfThoughtHeader>
                     <ChainOfThoughtContent>
                       {taskItems.length > 0 ? (
@@ -570,7 +738,8 @@ const PurePreviewMessage = ({
                         <ToolOutput
                           output={
                             <div className="text-sm text-muted-foreground">
-                              Mapped {(part.output as any)?.markerCount ?? 0} host location(s)
+                              Mapped {(part.output as any)?.markerCount ?? 0}{' '}
+                              host location(s)
                             </div>
                           }
                           errorText={undefined}
@@ -656,7 +825,44 @@ const PurePreviewMessage = ({
                 const anthropicDelegated =
                   isAnthropicDelegatedToolName(fullToolName);
 
-                if (state === 'input-streaming' || state === 'input-available') {
+                if (shortToolName === 'memory') {
+                  if (
+                    state === 'input-streaming' ||
+                    state === 'input-available'
+                  ) {
+                    return (
+                      <MemoryToolDisplay
+                        key={toolCallId}
+                        state="call"
+                        input={'input' in part ? part.input : undefined}
+                      />
+                    );
+                  }
+                  if (state === 'output-available') {
+                    return (
+                      <MemoryToolDisplay
+                        key={toolCallId}
+                        state="result"
+                        input={'input' in part ? part.input : undefined}
+                        output={part.output}
+                      />
+                    );
+                  }
+                  if (state === 'output-error') {
+                    return (
+                      <MemoryToolDisplay
+                        key={toolCallId}
+                        state="error"
+                        errorText={part.errorText}
+                      />
+                    );
+                  }
+                }
+
+                if (
+                  state === 'input-streaming' ||
+                  state === 'input-available'
+                ) {
                   return (
                     <ToolCard
                       key={toolCallId}
